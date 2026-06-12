@@ -111,7 +111,11 @@ class EsameRepository {
   /// Sincronizza la cache locale da Drive: scarica i JSON nuovi o
   /// modificati, salta quelli già aggiornati. Un errore su un singolo file
   /// non interrompe la sync degli altri.
-  Future<RisultatoSync> syncDaDrive() async {
+  ///
+  /// Elabora gli esami in pagine di [paginaDimensione] per evitare
+  /// di mantenere in memoria l'intera lista quando il Drive contiene
+  /// più di 20 esami.
+  Future<RisultatoSync> syncDaDrive({int paginaDimensione = 20}) async {
     final drive = _drive;
     if (drive == null) {
       throw StateError('Sync non disponibile: DriveRepository non configurato');
@@ -124,23 +128,29 @@ class EsameRepository {
     var invariati = 0;
     final errori = <String>[];
 
-    for (final remoto in remoti) {
-      final localeModificatoIl = dateLocali[remoto.dataIso];
-      final aggiornato =
-          dateLocali.containsKey(remoto.dataIso) &&
-          localeModificatoIl != null &&
-          remoto.modificatoIl != null &&
-          !remoto.modificatoIl!.isAfter(localeModificatoIl);
-      if (aggiornato) {
-        invariati++;
-        continue;
-      }
-      try {
-        final esame = await drive.downloadJson(remoto.jsonFileId);
-        await _db.upsertEsame(esame, modificatoIl: remoto.modificatoIl);
-        scaricati++;
-      } catch (e) {
-        errori.add('${remoto.dataIso}: $e');
+    // Elaborazione paginata: max [paginaDimensione] download per iterazione.
+    for (var offset = 0; offset < remoti.length; offset += paginaDimensione) {
+      final fine = (offset + paginaDimensione).clamp(0, remoti.length);
+      final pagina = remoti.sublist(offset, fine);
+
+      for (final remoto in pagina) {
+        final localeModificatoIl = dateLocali[remoto.dataIso];
+        final aggiornato =
+            dateLocali.containsKey(remoto.dataIso) &&
+            localeModificatoIl != null &&
+            remoto.modificatoIl != null &&
+            !remoto.modificatoIl!.isAfter(localeModificatoIl);
+        if (aggiornato) {
+          invariati++;
+          continue;
+        }
+        try {
+          final esame = await drive.downloadJson(remoto.jsonFileId);
+          await _db.upsertEsame(esame, modificatoIl: remoto.modificatoIl);
+          scaricati++;
+        } catch (e) {
+          errori.add('${remoto.dataIso}: $e');
+        }
       }
     }
 

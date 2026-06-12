@@ -7,7 +7,9 @@ plugins {
 
 android {
     namespace = "com.danieledituri.esami_tracker"
-    compileSdk = flutter.compileSdkVersion
+    // Fissiamo a 35 per avere le API Android 14 disponibili a compile time
+    // (anche se AICore viene attivato solo a runtime sui dispositivi supportati).
+    compileSdk = 35
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -20,24 +22,35 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "com.danieledituri.esami_tracker"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
-        // flutter_secure_storage (Android Keystore) richiede API 23+.
-        minSdk = flutter.minSdkVersion
-        targetSdk = flutter.targetSdkVersion
+        // flutter_secure_storage richiede API 23+.
+        minSdk = 23
+        targetSdk = 35
         versionCode = flutter.versionCode
         versionName = flutter.versionName
     }
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Signing con le chiavi debug per ora; sostituire con chiavi di
+            // produzione prima del rilascio sul Play Store.
             signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
+}
+
+dependencies {
+    // ML Kit Document Scanner — interfaccia fotocamera per scansione documenti
+    implementation("com.google.android.gms:play-services-mlkit-document-scanner:16.0.0-beta1")
+    // ML Kit Text Recognition — OCR on-device (modello scaricato via GMS)
+    implementation("com.google.android.gms:play-services-mlkit-text-recognition:19.0.1")
+    // Gemini Nano via AICore — richiede Android 14+ e Pixel 8/9 series
+    implementation("com.google.ai.edge.aicore:aicore:0.0.1-exp.1")
+    // Coroutines per integrare Task<T> di GMS con le coroutine Kotlin
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.8.1")
 }
 
 flutter {

@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/costanti.dart';
 import '../../providers/providers.dart';
+import '../../repositories/drive_repository.dart';
 import '../../ui/platform/adaptive_scaffold.dart';
 
 class ImpostazioniScreen extends ConsumerStatefulWidget {
@@ -112,6 +113,8 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
           const SizedBox(height: 24),
           _sezione('Google Drive'),
           _DriveSection(),
+          const SizedBox(height: 16),
+          _EsportaCsvButton(),
           const SizedBox(height: 32),
           FilledButton.icon(
             onPressed: _salva,
@@ -288,10 +291,7 @@ class _DriveSection extends ConsumerWidget {
         '${dt.minute.toString().padLeft(2, '0')}';
   }
 
-  static Future<void> _disconnetti(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
+  static Future<void> _disconnetti(BuildContext context, WidgetRef ref) async {
     final conferma = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -315,5 +315,67 @@ class _DriveSection extends ConsumerWidget {
     if (conferma == true) {
       await ref.read(authServiceProvider).scollega();
     }
+  }
+}
+
+// ---- Esporta CSV -----------------------------------------------------------
+
+class _EsportaCsvButton extends ConsumerStatefulWidget {
+  const _EsportaCsvButton();
+
+  @override
+  ConsumerState<_EsportaCsvButton> createState() => _EsportaCsvButtonState();
+}
+
+class _EsportaCsvButtonState extends ConsumerState<_EsportaCsvButton> {
+  bool _inCorso = false;
+
+  Future<void> _esporta() async {
+    setState(() => _inCorso = true);
+    try {
+      final esami = await ref.read(esameRepositoryProvider).esami();
+      if (esami.isEmpty) {
+        _mostraSnackbar('Nessun esame da esportare');
+        return;
+      }
+      await ref.read(driveRepositoryProvider).esportaCsv(esami);
+      _mostraSnackbar(
+        'CSV esportato in Google Drive › Esami del Sangue/export/',
+        errore: false,
+      );
+    } on DriveRepositoryException catch (e) {
+      _mostraSnackbar('Errore Drive: ${e.messaggio}', errore: true);
+    } catch (e) {
+      _mostraSnackbar('Errore export: $e', errore: true);
+    } finally {
+      if (mounted) setState(() => _inCorso = false);
+    }
+  }
+
+  void _mostraSnackbar(String testo, {bool errore = false}) {
+    if (!mounted) return;
+    final schema = Theme.of(context).colorScheme;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(testo),
+        backgroundColor: errore ? schema.error : null,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: _inCorso ? null : _esporta,
+      icon: _inCorso
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.download_outlined),
+      label: const Text('Esporta tutti i dati come CSV'),
+    );
   }
 }

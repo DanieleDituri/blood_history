@@ -8,6 +8,7 @@ class Costanti {
   static const cartellaDrive = 'Esami del Sangue';
   static const sottocartellaPdf = 'pdf';
   static const sottocartellaData = 'data';
+  static const sottocartellaExport = 'export';
 
   // Chiavi shared_preferences.
   static const prefEndpointModello = 'endpoint_modello';

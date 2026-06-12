@@ -172,6 +172,64 @@ class DriveRepository {
     }
   }
 
+  /// Genera un CSV con tutte le misurazioni di [esami] e lo carica su Drive
+  /// nella cartella `Esami del Sangue/export/` come
+  /// `esami_export_YYYY-MM-DD.csv`.
+  ///
+  /// Il file viene sovrascritto se esiste già un file con lo stesso nome
+  /// (stesso giorno di export).
+  /// Ritorna l'ID del file creato/aggiornato su Drive.
+  Future<String> esportaCsv(List<Esame> esami) async {
+    final api = await _api();
+    final idExport = await _idSottocartella(api, Costanti.sottocartellaExport);
+
+    final csv = _costruisciCsv(esami);
+    final bytes = Uint8List.fromList(utf8.encode(csv));
+
+    final oggi = DateTime.now();
+    final nomeFile =
+        'esami_export_${oggi.year}-${_pad(oggi.month)}-${_pad(oggi.day)}.csv';
+
+    return _caricaFile(
+      api: api,
+      idCartella: idExport,
+      nomeFile: nomeFile,
+      byte: bytes,
+      mimeType: 'text/csv; charset=utf-8',
+    );
+  }
+
+  static String _costruisciCsv(List<Esame> esami) {
+    final buf = StringBuffer();
+    buf.writeln('Data,Laboratorio,Parametro,Valore,Unità,Range Min,Range Max');
+    for (final esame in esami) {
+      final dataStr = esame.dataIso;
+      final labStr = _escapeCsv(esame.laboratorio ?? '');
+      for (final v in esame.valori) {
+        final row = [
+          dataStr,
+          labStr,
+          _escapeCsv(v.nome),
+          v.valore.toString(),
+          _escapeCsv(v.unita),
+          v.range.min?.toString() ?? '',
+          v.range.max?.toString() ?? '',
+        ].join(',');
+        buf.writeln(row);
+      }
+    }
+    return buf.toString();
+  }
+
+  static String _escapeCsv(String s) {
+    if (s.contains(',') || s.contains('"') || s.contains('\n')) {
+      return '"${s.replaceAll('"', '""')}"';
+    }
+    return s;
+  }
+
+  static String _pad(int n) => n.toString().padLeft(2, '0');
+
   // ---- Helper privati -----------------------------------------------------
 
   Future<String> _caricaFile({

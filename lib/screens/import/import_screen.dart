@@ -6,6 +6,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 
 import '../../models/valore_esame.dart';
+import '../../repositories/vision_repository.dart';
+import '../../services/android/android_import_service.dart';
 import '../../ui/platform/adaptive_button.dart';
 import '../../ui/platform/adaptive_platform.dart';
 import '../../ui/platform/adaptive_scaffold.dart';
@@ -15,15 +17,15 @@ import 'tabella_valori_editor.dart';
 /// Import di un referto: selezione PDF → estrazione col modello locale →
 /// anteprima editabile → salvataggio su Drive + cache locale.
 ///
-/// Su Android l'estrazione richiede ML Kit + Gemini Nano (Sessione 4):
-/// per ora la schermata è uno stub.
+/// Su Android: ML Kit Document Scanner + Gemini Nano (AICore).
+/// Fallback a inserimento manuale se AICore non è supportato.
 class ImportScreen extends ConsumerWidget {
   const ImportScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (AdaptivePlatform.corrente == PiattaformaApp.android) {
-      return const _StubAndroid();
+      return const _AndroidImportScreen();
     }
 
     final stato = ref.watch(importControllerProvider);
@@ -229,38 +231,242 @@ class _Salvato extends StatelessWidget {
   }
 }
 
-class _StubAndroid extends StatelessWidget {
-  const _StubAndroid();
+// ─── Schermata Import per Android ──────────────────────────────────────────
+
+/// Stati specifici della schermata Android.
+enum _StatoAndroid { inAttesa, scansione, estrazione, anteprima, errore }
+
+class _AndroidImportScreen extends StatefulWidget {
+  const _AndroidImportScreen();
+
+  @override
+  State<_AndroidImportScreen> createState() => _AndroidImportScreenState();
+}
+
+class _AndroidImportScreenState extends State<_AndroidImportScreen> {
+  _StatoAndroid _stato = _StatoAndroid.inAttesa;
+  bool? _aiCoreDisponibile;
+  String? _errore;
+  List<String> _base64Images = [];
+  List<ValoreEsame> _valoriEstratti = [];
+  DateTime? _dataEsame;
+
+  @override
+  void initState() {
+    super.initState();
+    _verificaAiCore();
+  }
+
+  Future<void> _verificaAiCore() async {
+    final supportato = await AndroidImportService.isAiCoreSupported();
+    if (mounted) setState(() => _aiCoreDisponibile = supportato);
+  }
+
+  Future<void> _avviaFlusso() async {
+    setState(() {
+      _stato = _StatoAndroid.scansione;
+      _errore = null;
+    });
+
+    try {
+      final images = await AndroidImportService.avviaScanner();
+      if (images == null || images.isEmpty) {
+        // Utente ha annullato
+        setState(() => _stato = _StatoAndroid.inAttesa);
+        return;
+      }
+      _base64Images = images;
+
+      if (_aiCoreDisponibile == true) {
+        setState(() => _stato = _StatoAndroid.estrazione);
+        final jsonRaw = await AndroidImportService.estraiTesto(images);
+        _analizzaJson(jsonRaw);
+      } else {
+        // Niente AICore: vai direttamente all'inserimento manuale
+        setState(() {
+          _valoriEstratti = [];
+          _dataEsame = null;
+          _stato = _StatoAndroid.anteprima;
+        });
+      }
+    } on AndroidImportException catch (e) {
+      setState(() {
+        _errore = e.messaggio;
+        _stato = _StatoAndroid.errore;
+      });
+    } catch (e) {
+      setState(() {
+        _errore = 'Errore inatteso: $e';
+        _stato = _StatoAndroid.errore;
+      });
+    }
+  }
+
+  void _analizzaJson(String jsonRaw) {
+    try {
+      // Riutilizza il parser già esistente in VisionRepository (tollerante
+      // a code fence, testo attorno, virgole decimali italiane ecc.).
+      final risultato = VisionRepository.parseRisposta(jsonRaw);
+      setState(() {
+        _valoriEstratti = risultato.valori;
+        _dataEsame = risultato.data;
+        _stato = _StatoAndroid.anteprima;
+      });
+    } catch (_) {
+      setState(() {
+        _valoriEstratti = [];
+        _dataEsame = null;
+        _stato = _StatoAndroid.anteprima;
+      });
+    }
+  }
+
+  void _reset() {
+    setState(() {
+      _stato = _StatoAndroid.inAttesa;
+      _errore = null;
+      _base64Images = [];
+      _valoriEstratti = [];
+      _dataEsame = null;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return AdaptiveScaffold(
       titolo: 'Import',
-      body: Center(
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(
-                Icons.document_scanner_outlined,
-                size: 64,
-                color: Theme.of(context).colorScheme.outline,
+      body: Column(
+        children: [
+          // Banner Gemini Nano non disponibile
+          if (_aiCoreDisponibile == false)
+            _BannerFallback(),
+
+          Expanded(
+            child: switch (_stato) {
+              _StatoAndroid.inAttesa => _InAttivaAndroid(
+                onAvvia: _avviaFlusso,
+                aiCoreOk: _aiCoreDisponibile,
               ),
-              const SizedBox(height: 16),
-              const Text(
-                'Funzionalità disponibile — richiede Gemini Nano',
-                textAlign: TextAlign.center,
+              _StatoAndroid.scansione => const _InCorso(
+                messaggio: 'Avvio scanner…',
               ),
-              const SizedBox(height: 8),
-              Text(
-                'Su Android l\'import userà ML Kit Document Scanner e '
-                'Gemini Nano on-device (Sessione 4)',
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall,
+              _StatoAndroid.estrazione => const _InCorso(
+                messaggio: 'Gemini Nano sta analizzando il referto…',
               ),
-            ],
+              _StatoAndroid.errore => Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.error_outline,
+                        size: 48,
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                      const SizedBox(height: 12),
+                      Text(_errore ?? 'Errore sconosciuto',
+                          textAlign: TextAlign.center),
+                      const SizedBox(height: 20),
+                      AdaptiveButton(
+                        etichetta: 'Riprova',
+                        icona: Icons.refresh,
+                        onPressed: _avviaFlusso,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              _StatoAndroid.anteprima => Consumer(
+                builder: (ctx, ref, _) => TabellaValoriEditor(
+                  key: ValueKey(Object.hashAll(_valoriEstratti)),
+                  valoriIniziali: _valoriEstratti,
+                  avviso: _valoriEstratti.isEmpty
+                      ? 'Gemini Nano non ha trovato valori — inseriscili manualmente'
+                      : 'Verifica i valori estratti prima di salvare',
+                  dataIniziale: _dataEsame,
+                  onSalva: (valori, data) async {
+                    final controller =
+                        ref.read(importControllerProvider.notifier);
+                    await controller.salva(valori, data);
+                    if (ctx.mounted) _reset();
+                  },
+                  onAnnulla: _reset,
+                ),
+              ),
+            },
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _BannerFallback extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    final schema = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      color: schema.tertiaryContainer,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 18, color: schema.onTertiaryContainer),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              'Gemini Nano non disponibile su questo dispositivo — inserimento manuale',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: schema.onTertiaryContainer,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InAttivaAndroid extends StatelessWidget {
+  final VoidCallback onAvvia;
+  final bool? aiCoreOk;
+
+  const _InAttivaAndroid({required this.onAvvia, required this.aiCoreOk});
+
+  @override
+  Widget build(BuildContext context) {
+    final schema = Theme.of(context).colorScheme;
+    final descrizione = aiCoreOk == false
+        ? 'Scansiona il referto con la fotocamera e inserisci i valori manualmente'
+        : 'Scansiona il referto con la fotocamera — Gemini Nano estrarrà i valori in automatico';
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.document_scanner_outlined, size: 72, color: schema.primary),
+            const SizedBox(height: 20),
+            Text(
+              'Scansiona un referto',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(descrizione,
+                textAlign: TextAlign.center,
+                style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 32),
+            AdaptiveButton(
+              etichetta: 'Scansiona referto',
+              icona: Icons.camera_alt_outlined,
+              onPressed: onAvvia,
+            ),
+          ],
         ),
       ),
     );

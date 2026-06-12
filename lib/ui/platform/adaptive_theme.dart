@@ -11,13 +11,27 @@ class AdaptiveTheme {
   /// Seed usato quando i colori dinamici non sono disponibili.
   static const seedColor = Color(0xFFB71C1C);
 
+  /// Animazioni di transizione: fade + slide leggero su tutti i target.
+  static const _transizioni = PageTransitionsTheme(
+    builders: {
+      TargetPlatform.android: _FadeSlideTransitionBuilder(),
+      TargetPlatform.macOS: _FadeSlideTransitionBuilder(),
+      TargetPlatform.windows: _FadeSlideTransitionBuilder(),
+      TargetPlatform.linux: _FadeSlideTransitionBuilder(),
+    },
+  );
+
   /// Tema Material (Android e macOS). Su Android [dinamico] arriva dal
   /// wallpaper (Material You); altrove o in fallback si usa il seed.
   static ThemeData material(Brightness brightness, {ColorScheme? dinamico}) {
     final schema =
         dinamico ??
         ColorScheme.fromSeed(seedColor: seedColor, brightness: brightness);
-    return ThemeData(colorScheme: schema, useMaterial3: true);
+    return ThemeData(
+      colorScheme: schema,
+      useMaterial3: true,
+      pageTransitionsTheme: _transizioni,
+    );
   }
 
   /// Blu di sistema Apple, fallback quando l'accent color dell'utente
@@ -56,7 +70,11 @@ class AdaptiveTheme {
             onSurface: const Color(0xFF1D1D1F),
             onSurfaceVariant: const Color(0xFF6E6E73),
           );
-    return ThemeData(colorScheme: schema, useMaterial3: true).copyWith(
+    return ThemeData(
+      colorScheme: schema,
+      useMaterial3: true,
+      pageTransitionsTheme: _transizioni,
+    ).copyWith(
       scaffoldBackgroundColor: Colors.transparent,
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -74,12 +92,43 @@ class AdaptiveTheme {
       );
 }
 
+/// Transizione personalizzata: fade + leggero slide verso l'alto
+/// (simile all'animazione di Material You su Android 12).
+class _FadeSlideTransitionBuilder
+    implements PageTransitionsBuilder {
+  const _FadeSlideTransitionBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final curvedAnim = CurvedAnimation(
+      parent: animation,
+      curve: Curves.easeOutCubic,
+      reverseCurve: Curves.easeInCubic,
+    );
+    final slide = Tween<Offset>(
+      begin: const Offset(0.0, 0.04),
+      end: Offset.zero,
+    ).animate(curvedAnim);
+
+    return FadeTransition(
+      opacity: curvedAnim,
+      child: SlideTransition(position: slide, child: child),
+    );
+  }
+}
+
 /// Radice dell'app: sceglie l'`*App` giusta per la piattaforma.
 ///
-/// - **Android** — [MaterialApp] con dynamic color (Material You) e
-///   fallback al seed.
-/// - **macOS** — [MaterialApp] come base, con tema predisposto per le
-///   superfici liquid glass.
+/// - **Android** — [MaterialApp] con dynamic color (Material You),
+///   fallback al seed, e `themeMode: ThemeMode.system`.
+/// - **macOS** — [MaterialApp] con tema predisposto per le superfici
+///   liquid glass e `themeMode: ThemeMode.system`.
 /// - **Windows** — [fluent.FluentApp]; un `builder` inserisce un ponte
 ///   Material (Theme + Material trasparente + localizzazioni) così i
 ///   widget Material usati DENTRO le schermate continuano a funzionare.
@@ -106,6 +155,8 @@ class AdaptiveApp extends StatelessWidget {
         builder: (context, scuro) => MaterialApp(
           title: titolo,
           debugShowCheckedModeBanner: false,
+          // Segue automaticamente la preferenza di sistema
+          themeMode: ThemeMode.system,
           theme: AdaptiveTheme.material(
             Brightness.light,
             dinamico: chiaro.data,
@@ -137,6 +188,7 @@ class AdaptiveApp extends StatelessWidget {
       builder: (context, accent) => MaterialApp(
         title: titolo,
         debugShowCheckedModeBanner: false,
+        themeMode: ThemeMode.system,
         theme: AdaptiveTheme.materialMacos(
           Brightness.light,
           accent: accent.data,
@@ -164,6 +216,7 @@ class AdaptiveApp extends StatelessWidget {
     return fluent.FluentApp(
       title: titolo,
       debugShowCheckedModeBanner: false,
+      // FluentApp rispetta già la modalità scura del sistema.
       theme: AdaptiveTheme.fluentTheme(Brightness.light),
       darkTheme: AdaptiveTheme.fluentTheme(Brightness.dark),
       localizationsDelegates: const [
@@ -171,9 +224,8 @@ class AdaptiveApp extends StatelessWidget {
         DefaultMaterialLocalizations.delegate,
         DefaultWidgetsLocalizations.delegate,
       ],
-      // Ponte Material: le schermate interne (non toccate dal design
-      // system) usano Theme.of, InkWell, Tooltip… che richiedono un
-      // Theme e un Material ancestor.
+      // Ponte Material: le schermate interne usano Theme.of, InkWell,
+      // Tooltip… che richiedono un Theme e un Material ancestor.
       builder: (context, child) {
         final brightness = fluent.FluentTheme.of(context).brightness;
         return Theme(
