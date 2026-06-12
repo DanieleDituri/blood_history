@@ -16,7 +16,12 @@ class Costanti {
   static const prefDriveClientSecret = 'drive_client_secret';
   static const prefCredenzialiDrive = 'drive_credentials';
 
-  // Default per il modello vision locale (Sessione 2).
+  // Modello vision locale.
+  static const prefTipoModello = 'tipo_modello'; // 'lmstudio' | 'ollama'
   static const endpointLmStudio = 'http://localhost:1234/v1';
   static const endpointOllama = 'http://localhost:11434/api';
+  // Qwen3-VL 8B: miglior rapporto qualità/velocità per OCR di referti
+  // tra i modelli vision locali (MLX 4-bit consigliato su Mac).
+  static const modelloDefaultLmStudio = 'qwen/qwen3-vl-8b';
+  static const modelloDefaultOllama = 'qwen3-vl:8b';
 }

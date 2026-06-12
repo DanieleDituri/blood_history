@@ -65,6 +65,8 @@ class _GrigliaParametri extends StatelessWidget {
         ),
         Expanded(
           child: GridView.builder(
+            // Il padding inferiore include la safe area: su macOS è la
+            // barra glass flottante, e la griglia ci scorre sotto.
             padding: const EdgeInsets.all(12),
             gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
               // Responsive: il numero di colonne segue la larghezza

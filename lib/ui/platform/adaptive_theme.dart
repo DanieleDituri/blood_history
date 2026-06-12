@@ -20,11 +20,43 @@ class AdaptiveTheme {
     return ThemeData(colorScheme: schema, useMaterial3: true);
   }
 
-  /// Variante macOS: superfici leggermente trasparenti così il liquid
-  /// glass ha qualcosa da rifrangere.
-  static ThemeData materialMacos(Brightness brightness) {
-    final base = material(brightness);
-    return base.copyWith(
+  /// Blu di sistema Apple, fallback quando l'accent color dell'utente
+  /// non è leggibile.
+  static const bluApple = Color(0xFF007AFF);
+
+  /// Variante macOS: niente tinta Material sulle superfici — grigi
+  /// neutri come le app native — e [accent] (l'accent color di sistema
+  /// dell'utente) come primario. Sfondo trasparente per il liquid glass.
+  static ThemeData materialMacos(Brightness brightness, {Color? accent}) {
+    final scuro = brightness == Brightness.dark;
+    final base = ColorScheme.fromSeed(
+      seedColor: accent ?? bluApple,
+      brightness: brightness,
+    );
+    // Material 3 tinge le superfici col primario: qui le sostituiamo
+    // con i grigi neutri tipici delle finestre macOS.
+    final schema = scuro
+        ? base.copyWith(
+            surface: const Color(0xFF1E1E1E),
+            surfaceContainerLowest: const Color(0xFF141414),
+            surfaceContainerLow: const Color(0xFF1B1B1D),
+            surfaceContainer: const Color(0xFF232325),
+            surfaceContainerHigh: const Color(0xFF2A2A2C),
+            surfaceContainerHighest: const Color(0xFF323234),
+            onSurface: const Color(0xFFF5F5F7),
+            onSurfaceVariant: const Color(0xFFB0B0B5),
+          )
+        : base.copyWith(
+            surface: const Color(0xFFF5F5F7),
+            surfaceContainerLowest: const Color(0xFFFFFFFF),
+            surfaceContainerLow: const Color(0xFFF7F7F8),
+            surfaceContainer: const Color(0xFFF2F2F3),
+            surfaceContainerHigh: const Color(0xFFECECEE),
+            surfaceContainerHighest: const Color(0xFFE5E5E7),
+            onSurface: const Color(0xFF1D1D1F),
+            onSurfaceVariant: const Color(0xFF6E6E73),
+          );
+    return ThemeData(colorScheme: schema, useMaterial3: true).copyWith(
       scaffoldBackgroundColor: Colors.transparent,
       appBarTheme: const AppBarTheme(
         backgroundColor: Colors.transparent,
@@ -100,13 +132,32 @@ class AdaptiveApp extends StatelessWidget {
   }
 
   Widget _macosApp() {
-    return MaterialApp(
-      title: titolo,
-      debugShowCheckedModeBanner: false,
-      theme: AdaptiveTheme.materialMacos(Brightness.light),
-      darkTheme: AdaptiveTheme.materialMacos(Brightness.dark),
-      home: home,
+    return FutureBuilder<Color?>(
+      future: _accentDiSistema(),
+      builder: (context, accent) => MaterialApp(
+        title: titolo,
+        debugShowCheckedModeBanner: false,
+        theme: AdaptiveTheme.materialMacos(
+          Brightness.light,
+          accent: accent.data,
+        ),
+        darkTheme: AdaptiveTheme.materialMacos(
+          Brightness.dark,
+          accent: accent.data,
+        ),
+        home: home,
+      ),
     );
+  }
+
+  /// Accent color scelto dall'utente in Impostazioni di Sistema (macOS);
+  /// null se non disponibile (test, versioni vecchie) → blu Apple.
+  static Future<Color?> _accentDiSistema() async {
+    try {
+      return await DynamicColorPlugin.getAccentColor();
+    } catch (_) {
+      return null;
+    }
   }
 
   Widget _fluentApp() {

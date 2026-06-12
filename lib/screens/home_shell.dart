@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 import '../ui/platform/adaptive_navigation.dart';
 import '../ui/platform/adaptive_scaffold.dart';
+import 'import/import_screen.dart';
 import 'snapshot/snapshot_screen.dart';
 
 /// Shell dell'app: la navigazione concreta la decide [AdaptiveNavigation]
-/// (NavigationBar su Android, GlassBottomBar su macOS, NavigationView
+/// (NavigationBar su Android, sidebar a sinistra su macOS, NavigationView
 /// laterale su Windows).
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
@@ -43,7 +44,7 @@ class _HomeShellState extends State<HomeShell> {
   static const _schermate = [
     SnapshotScreen(),
     _InCostruzione(titolo: 'Grafici'),
-    _InCostruzione(titolo: 'Import'),
+    ImportScreen(),
     _InCostruzione(titolo: 'Impostazioni'),
   ];
 

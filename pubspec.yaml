@@ -26,9 +26,12 @@ dependencies:
   # Grafici (Sessione 2)
   fl_chart: ^0.69.2
 
-  # Import PDF (Sessione 2)
+  # Import PDF
   file_picker: ^8.1.4
   http: ^1.2.2
+  # NB: 2.3+ richiede Flutter >=3.41; 2.2.24 è l'ultima per il nostro 3.35.
+  pdfrx: '>=2.2.24 <2.3.0'
+  desktop_drop: ^0.7.1 # drag&drop dei PDF su desktop
 
   # Cache locale
   drift: ^2.21.0

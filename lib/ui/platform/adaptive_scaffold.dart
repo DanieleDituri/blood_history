@@ -64,15 +64,13 @@ class _ScaffoldMacos extends StatelessWidget {
     final schema = Theme.of(context).colorScheme;
     return DecoratedBox(
       // Gradiente di sfondo: dà profondità al blur delle superfici glass.
+      // Toni neutri di superficie: una tinta colorata qui impasta tutta
+      // la schermata (testo, barre, card).
       decoration: BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            schema.surfaceContainerLowest,
-            schema.surfaceContainerHigh,
-            schema.primaryContainer.withValues(alpha: 0.35),
-          ],
+          colors: [schema.surfaceContainerLowest, schema.surfaceContainerHigh],
         ),
       ),
       child: Scaffold(

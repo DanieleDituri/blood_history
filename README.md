@@ -9,7 +9,9 @@ vision locale, archiviazione su Google Drive, snapshot e grafici storici.
 | Sessione | Contenuto | Stato |
 | --- | --- | --- |
 | 1 | Scaffold, modelli, Google Drive auth, repository, cache drift, schermata Snapshot (mock) | ✅ |
-| 2+ | Import PDF (LM Studio/Ollama su desktop, ML Kit + Gemini Nano su Android), Grafici, Impostazioni | ⏳ |
+| 1b | Design system adattivo (Material You / liquid glass / Fluent), accesso Drive senza login, secure storage | ✅ |
+| 2 | Import PDF su desktop: pdfrx → modello vision locale (LM Studio/Ollama) → anteprima editabile → Drive | ✅ |
+| 3+ | Grafici, Impostazioni, import Android (ML Kit + Gemini Nano) | ⏳ |
 
 ## Architettura
 
@@ -27,9 +29,15 @@ lib/
 │   ├── drive_auth_service.dart # accesso a Drive senza login ricorrente
 │   │                           # (consenso una tantum + refresh token)
 │   └── archivio_credenziali.dart # keystore di piattaforma (secure storage)
+├── services/pdf/pdf_rasterizzatore.dart # PDF → PNG per pagina (pdfrx/Pdfium)
+├── services/vision/            # client modello locale, strategia selezionabile
+│   ├── vision_client.dart      #   interfaccia comune
+│   ├── lm_studio_client.dart   #   OpenAI-compatible (/v1/chat/completions)
+│   └── ollama_client.dart      #   API nativa Ollama (/api/generate)
 ├── repositories/
 │   ├── drive_repository.dart  # Esami del Sangue/{pdf,data}/ su Drive
-│   └── esame_repository.dart  # cache drift + sync da Drive (Drive = fonte di verità)
+│   ├── esame_repository.dart  # cache drift + sync da Drive (Drive = fonte di verità)
+│   └── vision_repository.dart # prompt + parsing JSON + retry temperatura 0
 ├── data/
 │   ├── db/database.dart       # schema drift (esami 1-N valori) + query
 │   └── mock/mock_esami.dart   # 3 referti finti, 15 parametri
@@ -141,11 +149,38 @@ Per una futura versione pubblica restano da fare (non bloccanti ora):
 verifica del brand OAuth da parte di Google se gli utenti superano le
 soglie, e una schermata di onboarding per il collegamento a Drive.
 
+### Modello vision locale (Import su desktop)
+
+L'estrazione avviene in locale: il PDF viene renderizzato in PNG per
+pagina (pdfrx/Pdfium, max 2048px di lato) e mandato al modello vision.
+Backend selezionabili (default LM Studio; Ollama via prefs, schermata
+Impostazioni in arrivo):
+
+| Backend | Endpoint default | Modello default |
+| --- | --- | --- |
+| LM Studio | `http://localhost:1234/v1` | `qwen/qwen3-vl-8b` (MLX su Mac) |
+| Ollama | `http://localhost:11434/api` | `qwen3-vl:8b` |
+
+Qwen3-VL-8B-Instruct è il consigliato: OCR documentale allo stato
+dell'arte tra i modelli locali piccoli, ~6 GB in 4-bit. Se è lento sul
+proprio hardware, Qwen3-VL-4B è l'alternativa rapida.
+
+Fino a 2 pagine si manda tutto in una richiesta; oltre, una pagina per
+volta con unione dei risultati (duplicati per nome scartati). Se il
+modello non risponde JSON valido si ritenta a temperatura 0; se fallisce
+ancora, la UI offre l'inserimento manuale. I valori estratti sono sempre
+rivedibili in una tabella editabile prima del salvataggio.
+
+Il salvataggio scrive sempre prima nella cache locale, poi su Drive: se
+Drive non è ancora collegato l'esame non si perde e la UI offre
+"Collega Drive e riprova".
+
 ## Note per le sessioni successive
 
-- La Snapshot legge da `usaDatiMockProvider` (default `true`): quando
-  l'Import sarà attivo basta metterlo a `false` per passare alla cache
-  drift + Drive.
-- `fl_chart`, `file_picker` e `http` sono già in pubspec per la Sessione 2.
+- La Snapshot mostra i mock solo finché non c'è almeno un esame vero in
+  cache: al primo import reale passa automaticamente ai dati veri.
+- `fl_chart` è già in pubspec per i Grafici (Sessione 3).
 - `EsameRepository.syncDaDrive()` confronta il `modifiedTime` remoto con
   quello in cache: scarica solo i JSON nuovi o cambiati.
+- Import Android: stub in `import_screen.dart`, da implementare con
+  ML Kit Document Scanner + Gemini Nano (Sessione 4).

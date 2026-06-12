@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  desktop_drop
   dynamic_color
   flutter_secure_storage_windows
   sqlite3_flutter_libs
@@ -10,6 +11,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
 )
 
 list(APPEND FLUTTER_FFI_PLUGIN_LIST
+  pdfium_flutter
 )
 
 set(PLUGIN_BUNDLED_LIBRARIES)
