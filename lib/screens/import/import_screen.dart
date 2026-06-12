@@ -41,15 +41,17 @@ class ImportScreen extends ConsumerWidget {
           ),
           ImportInCorso(:final messaggio) => _InCorso(messaggio: messaggio),
           ImportErrore() => _Errore(stato: stato, controller: controller),
-          ImportAnteprima(:final valori, :final avviso) => TabellaValoriEditor(
-            // Una key nuova per ogni anteprima: i controller di testo
-            // ripartono dai valori estratti.
-            key: ObjectKey(stato),
-            valoriIniziali: valori,
-            avviso: avviso,
-            onSalva: controller.salva,
-            onAnnulla: controller.nuovoImport,
-          ),
+          ImportAnteprima(:final valori, :final avviso, :final dataEsame) =>
+            TabellaValoriEditor(
+              // Una key nuova per ogni anteprima: i controller di testo
+              // ripartono dai valori estratti.
+              key: ObjectKey(stato),
+              valoriIniziali: valori,
+              avviso: avviso,
+              dataIniziale: dataEsame,
+              onSalva: controller.salva,
+              onAnnulla: controller.nuovoImport,
+            ),
           ImportSalvato() => _Salvato(stato: stato, controller: controller),
         },
       ),

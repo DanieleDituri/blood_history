@@ -15,6 +15,7 @@ class Costanti {
   static const prefDriveClientId = 'drive_client_id';
   static const prefDriveClientSecret = 'drive_client_secret';
   static const prefCredenzialiDrive = 'drive_credentials';
+  static const prefOnboardingCompletato = 'onboarding_completato';
 
   // Modello vision locale.
   static const prefTipoModello = 'tipo_modello'; // 'lmstudio' | 'ollama'

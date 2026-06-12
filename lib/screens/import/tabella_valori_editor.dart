@@ -15,12 +15,16 @@ class TabellaValoriEditor extends StatefulWidget {
   final SalvaEsame onSalva;
   final VoidCallback onAnnulla;
 
+  /// Data letta dal referto; se null l'editor usa la data odierna.
+  final DateTime? dataIniziale;
+
   const TabellaValoriEditor({
     super.key,
     required this.valoriIniziali,
     this.avviso,
     required this.onSalva,
     required this.onAnnulla,
+    this.dataIniziale,
   });
 
   @override
@@ -30,11 +34,12 @@ class TabellaValoriEditor extends StatefulWidget {
 class _TabellaValoriEditorState extends State<TabellaValoriEditor> {
   final _formKey = GlobalKey<FormState>();
   final List<_RigaEditor> _righe = [];
-  DateTime _dataEsame = DateTime.now();
+  late DateTime _dataEsame;
 
   @override
   void initState() {
     super.initState();
+    _dataEsame = widget.dataIniziale ?? DateTime.now();
     for (final valore in widget.valoriIniziali) {
       _righe.add(_RigaEditor.daValore(valore));
     }

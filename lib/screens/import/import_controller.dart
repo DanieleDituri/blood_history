@@ -37,7 +37,10 @@ class ImportAnteprima extends StatoImport {
   /// Avviso non bloccante da mostrare sopra la tabella.
   final String? avviso;
 
-  const ImportAnteprima({required this.valori, this.avviso});
+  /// Data del prelievo letta dal referto (null → editor usa oggi).
+  final DateTime? dataEsame;
+
+  const ImportAnteprima({required this.valori, this.avviso, this.dataEsame});
 }
 
 /// Estrazione fallita prima dell'anteprima.
@@ -121,7 +124,7 @@ class ImportController extends StateNotifier<StatoImport> {
       );
 
       final vision = await _ref.read(visionRepositoryProvider.future);
-      final valori = await vision.estraiValori(
+      final risultato = await vision.estraiValori(
         pagine,
         onProgresso: (pagina, totale) => state = ImportInCorso(
           totale == 1
@@ -131,8 +134,9 @@ class ImportController extends StateNotifier<StatoImport> {
       );
 
       state = ImportAnteprima(
-        valori: valori,
-        avviso: valori.isEmpty
+        valori: risultato.valori,
+        dataEsame: risultato.data,
+        avviso: risultato.valori.isEmpty
             ? 'Il modello non ha trovato valori: aggiungili manualmente'
             : 'Controlla i valori estratti prima di salvare',
       );

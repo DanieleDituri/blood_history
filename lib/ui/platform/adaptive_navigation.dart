@@ -4,15 +4,21 @@ import 'package:flutter/material.dart';
 import 'adaptive_platform.dart';
 
 /// Una voce di navigazione, indipendente dalla piattaforma.
+///
+/// [isFooter] = true → su macOS la voce appare in fondo alla sidebar
+/// (separata da un divisore), come il pulsante Impostazioni in Notes.
+/// Su Android viene trattata come voce normale nel NavigationBar.
 class DestinazioneAdaptive {
   final IconData icona;
   final IconData iconaAttiva;
   final String etichetta;
+  final bool isFooter;
 
   const DestinazioneAdaptive({
     required this.icona,
     required this.iconaAttiva,
     required this.etichetta,
+    this.isFooter = false,
   });
 }
 
@@ -110,6 +116,9 @@ class AdaptiveNavigation extends StatelessWidget {
 /// Sidebar macOS nativa: colonna con voci icona+testo, selezione con
 /// rounded rect tenue, nessun indicatore Material.  Stessa struttura di
 /// Note, Promemoria, Fork, ecc.
+///
+/// Le voci con [DestinazioneAdaptive.isFooter] == true vengono raggruppate
+/// in fondo alla sidebar (separatore + fondo), come Impostazioni in Note.
 class _SidebarMacos extends StatelessWidget {
   final int indiceSelezionato;
   final ValueChanged<int> onSeleziona;
@@ -127,10 +136,18 @@ class _SidebarMacos extends StatelessWidget {
     final brightness = Theme.of(context).brightness;
     final isDark = brightness == Brightness.dark;
 
-    // Sfondo panel sidebar — leggermente più scuro/chiaro del contenuto
     final bgColor = isDark
         ? const Color(0xFF1A1A1C)
         : const Color(0xFFECECEE);
+
+    final principali = [
+      for (var i = 0; i < destinazioni.length; i++)
+        if (!destinazioni[i].isFooter) (indice: i, dest: destinazioni[i]),
+    ];
+    final footer = [
+      for (var i = 0; i < destinazioni.length; i++)
+        if (destinazioni[i].isFooter) (indice: i, dest: destinazioni[i]),
+    ];
 
     return Container(
       width: 180,
@@ -138,16 +155,28 @@ class _SidebarMacos extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          // Spazio per la traffic-light bar di macOS
-          const SizedBox(height: 52),
-          for (var i = 0; i < destinazioni.length; i++)
+          const SizedBox(height: 52), // spazio traffic-light macOS
+          for (final item in principali)
             _VoceSidebar(
-              destinazione: destinazioni[i],
-              selezionata: i == indiceSelezionato,
+              destinazione: item.dest,
+              selezionata: item.indice == indiceSelezionato,
               isDark: isDark,
               accentColor: schema.primary,
-              onTap: () => onSeleziona(i),
+              onTap: () => onSeleziona(item.indice),
             ),
+          const Spacer(),
+          if (footer.isNotEmpty) ...[
+            Divider(height: 1, thickness: 1, color: schema.outlineVariant),
+            for (final item in footer)
+              _VoceSidebar(
+                destinazione: item.dest,
+                selezionata: item.indice == indiceSelezionato,
+                isDark: isDark,
+                accentColor: schema.primary,
+                onTap: () => onSeleziona(item.indice),
+              ),
+            const SizedBox(height: 8),
+          ],
         ],
       ),
     );

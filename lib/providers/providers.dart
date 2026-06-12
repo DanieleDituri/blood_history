@@ -3,8 +3,6 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../core/costanti.dart';
 import '../data/db/database.dart';
-import '../data/mock/mock_esami.dart';
-import '../models/parametro_snapshot.dart';
 import '../repositories/drive_repository.dart';
 import '../repositories/esame_repository.dart';
 import '../repositories/vision_repository.dart';
@@ -13,6 +11,10 @@ import '../services/pdf/pdf_rasterizzatore.dart';
 import '../services/vision/lm_studio_client.dart';
 import '../services/vision/ollama_client.dart';
 import '../services/vision/vision_client.dart';
+
+// Re-esporta i notifier così i consumer importano solo questo file.
+export 'esami_notifier.dart';
+export 'sync_notifier.dart';
 
 /// Mostra i dati mock nella Snapshot finché non ci sono esami veri in
 /// cache (il primo import reale prende automaticamente il sopravvento).
@@ -24,7 +26,6 @@ final databaseProvider = Provider<AppDatabase>((ref) {
   return db;
 });
 
-/// Accesso a Drive: autorizzazione una tantum, poi sempre silenzioso.
 final authServiceProvider = Provider<DriveAuthService>(
   (ref) => DriveAuthService(),
 );
@@ -40,10 +41,16 @@ final esameRepositoryProvider = Provider<EsameRepository>(
   ),
 );
 
+// ---- Onboarding -------------------------------------------------------------
+
+/// true se l'utente non ha ancora completato il flusso di primo avvio.
+final primoAvvioProvider = FutureProvider<bool>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return !(prefs.getBool(Costanti.prefOnboardingCompletato) ?? false);
+});
+
 // ---- Modello vision locale --------------------------------------------------
 
-/// Configurazione del backend vision, dalle Impostazioni (con default
-/// LM Studio).
 class ConfigModello {
   final String tipo; // 'lmstudio' | 'ollama'
   final String endpoint;
@@ -84,26 +91,3 @@ final visionRepositoryProvider = FutureProvider<VisionRepository>((ref) async {
 final pdfRasterizzatoreProvider = Provider<PdfRasterizzatore>(
   (ref) => PdfrxRasterizzatore(),
 );
-
-// ---- Snapshot ----------------------------------------------------------------
-
-/// Ultimo valore noto di ogni parametro, per la griglia della Snapshot.
-final snapshotProvider = FutureProvider<List<ParametroSnapshot>>((ref) async {
-  final repo = ref.watch(esameRepositoryProvider);
-  final reale = await repo.snapshot();
-
-  // Dati veri in cache → si usano quelli, mock o non mock.
-  if (reale.isNotEmpty || !ref.watch(usaDatiMockProvider)) return reale;
-
-  // Nessun dato vero: stessa logica "ultimo valore per parametro" sui mock.
-  final db = AppDatabase.inMemory();
-  try {
-    final repoMock = EsameRepository(db);
-    for (final esame in MockEsami.esami) {
-      await repoMock.salvaEsame(esame);
-    }
-    return await repoMock.snapshot();
-  } finally {
-    await db.close();
-  }
-});

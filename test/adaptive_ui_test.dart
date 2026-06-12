@@ -125,10 +125,11 @@ void main() {
       expect(find.text('pagina 1'), findsOneWidget);
     });
 
-    testWidgets('macOS → GlassBottomBar', (tester) async {
+    testWidgets('macOS → sidebar sinistra, niente NavigationBar', (tester) async {
       AdaptivePlatform.debugOverride = PiattaformaApp.macos;
       await pompa(tester, navigazione);
-      expect(find.byType(GlassBottomBar), findsOneWidget);
+      // La sidebar macOS è un Container generico: verifichiamo che NON ci
+      // sia la NavigationBar Material (è rimpiazzata dalla sidebar custom).
       expect(find.byType(NavigationBar), findsNothing);
       expect(find.text('pagina 1'), findsOneWidget);
     });
@@ -140,7 +141,6 @@ void main() {
       await pompa(tester, navigazione);
       expect(find.byType(fluent.NavigationView), findsOneWidget);
       expect(find.byType(NavigationBar), findsNothing);
-      expect(find.byType(GlassBottomBar), findsNothing);
     });
   });
 

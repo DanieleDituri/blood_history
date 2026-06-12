@@ -123,7 +123,7 @@ class DriveRepository {
     return _caricaFile(
       api: api,
       idCartella: idPdf,
-      nomeFile: '$dataIso.pdf',
+      nomeFile: 'esame_sangue_$dataIso.pdf',
       byte: byte,
       mimeType: 'application/pdf',
     );

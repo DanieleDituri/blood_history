@@ -1,13 +1,18 @@
 import 'package:flutter/material.dart';
 
 import '../ui/platform/adaptive_navigation.dart';
-import '../ui/platform/adaptive_scaffold.dart';
+import 'grafici/grafici_screen.dart';
+import 'impostazioni/impostazioni_screen.dart';
 import 'import/import_screen.dart';
 import 'snapshot/snapshot_screen.dart';
 
 /// Shell dell'app: la navigazione concreta la decide [AdaptiveNavigation]
 /// (NavigationBar su Android, sidebar a sinistra su macOS, NavigationView
-/// laterale su Windows).
+/// su Windows).
+///
+/// Snapshot / Grafici / Import sono le 3 tab principali.
+/// Impostazioni ha [DestinazioneAdaptive.isFooter] = true → in fondo alla
+/// sidebar su macOS/Windows, come voce normale su Android.
 class HomeShell extends StatefulWidget {
   const HomeShell({super.key});
 
@@ -38,14 +43,15 @@ class _HomeShellState extends State<HomeShell> {
       icona: Icons.settings_outlined,
       iconaAttiva: Icons.settings,
       etichetta: 'Impostazioni',
+      isFooter: true,
     ),
   ];
 
   static const _schermate = [
     SnapshotScreen(),
-    _InCostruzione(titolo: 'Grafici'),
+    GraficiScreen(),
     ImportScreen(),
-    _InCostruzione(titolo: 'Impostazioni'),
+    ImpostazioniScreen(),
   ];
 
   @override
@@ -55,34 +61,6 @@ class _HomeShellState extends State<HomeShell> {
       onDestinazioneSelezionata: (i) => setState(() => _indice = i),
       destinazioni: _destinazioni,
       schermate: _schermate,
-    );
-  }
-}
-
-/// Placeholder per le schermate delle sessioni successive.
-class _InCostruzione extends StatelessWidget {
-  final String titolo;
-
-  const _InCostruzione({required this.titolo});
-
-  @override
-  Widget build(BuildContext context) {
-    return AdaptiveScaffold(
-      titolo: titolo,
-      body: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.construction,
-              size: 64,
-              color: Theme.of(context).colorScheme.outline,
-            ),
-            const SizedBox(height: 16),
-            Text('$titolo in arrivo nella prossima sessione'),
-          ],
-        ),
-      ),
     );
   }
 }

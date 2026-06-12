@@ -13,8 +13,8 @@ import 'package:http/testing.dart';
 final _png = Uint8List.fromList([0x89, 0x50, 0x4E, 0x47, 1, 2, 3]);
 
 const _jsonValido =
-    '{"valori": [{"nome": "Glicemia", "valore": 92, "unita": "mg/dL", '
-    '"range_min": 70, "range_max": 99}]}';
+    '{"data": "2024-03-15", "valori": [{"nome": "Glicemia", "valore": 92, '
+    '"unita": "mg/dL", "range_min": 70, "range_max": 99}]}';
 
 /// Client finto che registra le chiamate e risponde dalla coda.
 class _FakeVisionClient implements VisionClient {
@@ -190,28 +190,67 @@ void main() {
   });
 
   group('VisionRepository.parseRisposta', () {
-    test('JSON pulito', () {
-      final valori = VisionRepository.parseRisposta(_jsonValido);
-      expect(valori, hasLength(1));
-      expect(valori.single.nome, 'Glicemia');
-      expect(valori.single.valore, 92);
-      expect(valori.single.unita, 'mg/dL');
-      expect(valori.single.range.min, 70);
-      expect(valori.single.range.max, 99);
-      expect(valori.single.stato, StatoValore.inRange);
+    test('JSON pulito con data ISO', () {
+      final risultato = VisionRepository.parseRisposta(_jsonValido);
+      expect(risultato.valori, hasLength(1));
+      expect(risultato.valori.single.nome, 'Glicemia');
+      expect(risultato.valori.single.valore, 92);
+      expect(risultato.valori.single.unita, 'mg/dL');
+      expect(risultato.valori.single.range.min, 70);
+      expect(risultato.valori.single.range.max, 99);
+      expect(risultato.valori.single.stato, StatoValore.inRange);
+      expect(risultato.data, DateTime(2024, 3, 15));
+    });
+
+    test('data in formato DD/MM/YYYY', () {
+      const risposta =
+          '{"data": "15/03/2024", "valori": [{"nome": "Glucosio", '
+          '"valore": 90, "unita": "mg/dL"}]}';
+      final risultato = VisionRepository.parseRisposta(risposta);
+      expect(risultato.data, DateTime(2024, 3, 15));
+    });
+
+    test('data in formato DD/MM/YY', () {
+      const risposta =
+          '{"data": "15/03/24", "valori": [{"nome": "Glucosio", '
+          '"valore": 90, "unita": "mg/dL"}]}';
+      final risultato = VisionRepository.parseRisposta(risposta);
+      expect(risultato.data, DateTime(2024, 3, 15));
+    });
+
+    test('data in formato DD.MM.YYYY', () {
+      const risposta =
+          '{"data": "15.03.2024", "valori": [{"nome": "Glucosio", '
+          '"valore": 90, "unita": "mg/dL"}]}';
+      final risultato = VisionRepository.parseRisposta(risposta);
+      expect(risultato.data, DateTime(2024, 3, 15));
+    });
+
+    test('data assente → null', () {
+      const risposta =
+          '{"valori": [{"nome": "Glucosio", "valore": 90, "unita": "mg/dL"}]}';
+      final risultato = VisionRepository.parseRisposta(risposta);
+      expect(risultato.data, isNull);
+    });
+
+    test('data futura → null (scartata)', () {
+      const risposta =
+          '{"data": "2099-01-01", "valori": [{"nome": "X", "valore": 1}]}';
+      final risultato = VisionRepository.parseRisposta(risposta);
+      expect(risultato.data, isNull);
     });
 
     test('JSON dentro code fence markdown e testo attorno', () {
       final risposta =
           'Ecco i valori estratti:\n```json\n$_jsonValido\n```\nSpero aiuti!';
-      expect(VisionRepository.parseRisposta(risposta), hasLength(1));
+      expect(VisionRepository.parseRisposta(risposta).valori, hasLength(1));
     });
 
     test('numeri come stringhe con la virgola', () {
       const risposta =
           '{"valori": [{"nome": "TSH", "valore": "2,1", "unita": "µUI/mL", '
           '"range_min": "0,4", "range_max": "4,0"}]}';
-      final valore = VisionRepository.parseRisposta(risposta).single;
+      final valore = VisionRepository.parseRisposta(risposta).valori.single;
       expect(valore.valore, 2.1);
       expect(valore.range.min, 0.4);
       expect(valore.range.max, 4.0);
@@ -221,7 +260,7 @@ void main() {
       const risposta =
           '{"valori": [{"nome": "HDL", "valore": 55, "unita": "mg/dL", '
           '"range_min": 40, "range_max": null}]}';
-      final valore = VisionRepository.parseRisposta(risposta).single;
+      final valore = VisionRepository.parseRisposta(risposta).valori.single;
       expect(valore.range.min, 40);
       expect(valore.range.max, isNull);
     });
@@ -233,7 +272,7 @@ void main() {
           '{"nome": "", "valore": 1}, '
           '{"valore": 5}, '
           '{"nome": "Rotto", "valore": "n/d"}]}';
-      final valori = VisionRepository.parseRisposta(risposta);
+      final valori = VisionRepository.parseRisposta(risposta).valori;
       expect(valori.map((v) => v.nome), ['Glicemia']);
     });
 
@@ -258,12 +297,13 @@ void main() {
       final repo = VisionRepository(client);
       final progressi = <(int, int)>[];
 
-      final valori = await repo.estraiValori([
+      final risultato = await repo.estraiValori([
         _png,
         _png,
       ], onProgresso: (p, t) => progressi.add((p, t)));
 
-      expect(valori, hasLength(1));
+      expect(risultato.valori, hasLength(1));
+      expect(risultato.data, DateTime(2024, 3, 15));
       expect(client.chiamate, hasLength(1));
       expect(client.chiamate.single.immagini, hasLength(2));
       expect(progressi, [(1, 1)]);
@@ -276,9 +316,9 @@ void main() {
       ]);
       final repo = VisionRepository(client);
 
-      final valori = await repo.estraiValori([_png]);
+      final risultato = await repo.estraiValori([_png]);
 
-      expect(valori, hasLength(1));
+      expect(risultato.valori, hasLength(1));
       expect(client.chiamate, hasLength(2));
       expect(client.chiamate.first.temperatura, greaterThan(0));
       expect(client.chiamate.last.temperatura, 0);
@@ -315,12 +355,15 @@ void main() {
     });
 
     test(
-      'referto lungo → una richiesta per pagina, unione senza duplicati',
+      'referto lungo → una richiesta per pagina, unione senza duplicati, '
+      'prima data vince',
       () async {
         const paginaGlicemia =
-            '{"valori": [{"nome": "Glicemia", "valore": 92, "unita": "mg/dL"}]}';
+            '{"data": "2024-01-10", "valori": [{"nome": "Glicemia", '
+            '"valore": 92, "unita": "mg/dL"}]}';
         const paginaMista =
-            '{"valori": [{"nome": "GLICEMIA", "valore": 92, "unita": "mg/dL"}, '
+            '{"data": "2024-01-11", "valori": [{"nome": "GLICEMIA", '
+            '"valore": 92, "unita": "mg/dL"}, '
             '{"nome": "TSH", "valore": 2.1, "unita": "µUI/mL"}]}';
         const paginaVuota = '{"valori": []}';
         final client = _FakeVisionClient([
@@ -331,7 +374,7 @@ void main() {
         final repo = VisionRepository(client);
         final progressi = <(int, int)>[];
 
-        final valori = await repo.estraiValori([
+        final risultato = await repo.estraiValori([
           _png,
           _png,
           _png,
@@ -340,7 +383,9 @@ void main() {
         expect(client.chiamate, hasLength(3));
         expect(client.chiamate.every((c) => c.immagini.length == 1), isTrue);
         // "GLICEMIA" della seconda pagina è un duplicato case-insensitive.
-        expect(valori.map((v) => v.nome), ['Glicemia', 'TSH']);
+        expect(risultato.valori.map((v) => v.nome), ['Glicemia', 'TSH']);
+        // Prima data trovata (pagina 1) vince sulla seconda.
+        expect(risultato.data, DateTime(2024, 1, 10));
         expect(progressi, [(1, 3), (2, 3), (3, 3)]);
       },
     );
@@ -349,7 +394,9 @@ void main() {
       final client = _FakeVisionClient([]);
       final repo = VisionRepository(client);
 
-      expect(await repo.estraiValori([]), isEmpty);
+      final risultato = await repo.estraiValori([]);
+      expect(risultato.valori, isEmpty);
+      expect(risultato.data, isNull);
       expect(client.chiamate, isEmpty);
     });
   });

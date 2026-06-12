@@ -9,7 +9,6 @@ import '../services/vision/vision_client.dart';
 /// nemmeno dopo il retry a temperatura 0: la UI deve offrire
 /// l'inserimento manuale.
 class EstrazioneNonValidaException implements Exception {
-  /// L'ultima risposta grezza del modello, per diagnostica.
   final String rispostaGrezza;
 
   const EstrazioneNonValidaException(this.rispostaGrezza);
@@ -17,6 +16,17 @@ class EstrazioneNonValidaException implements Exception {
   @override
   String toString() =>
       'EstrazioneNonValidaException: il modello non ha prodotto JSON valido';
+}
+
+/// Risultato dell'estrazione da una o più pagine.
+///
+/// [data] è la data del prelievo letta dal referto (null se il modello
+/// non l'ha trovata o non era leggibile).
+class RisultatoEstrazione {
+  final List<ValoreEsame> valori;
+  final DateTime? data;
+
+  const RisultatoEstrazione({required this.valori, this.data});
 }
 
 /// Estrazione dei valori da un referto tramite modello vision locale.
@@ -27,20 +37,17 @@ class EstrazioneNonValidaException implements Exception {
 /// fallisce si ritenta una volta a temperatura 0; se fallisce ancora,
 /// [EstrazioneNonValidaException].
 class VisionRepository {
-  /// Prompt concordato con i modelli (da non modificare a cuor leggero:
-  /// il parser si aspetta il formato che questo prompt chiede).
+  /// Prompt concordato con i modelli — include la richiesta della data.
   static const promptEstrazione =
-      'Sei un assistente medico. Analizza questo referto del sangue ed '
-      'estrai tutti i valori in formato JSON. Per ogni parametro '
-      'restituisci: nome (stringa), valore (numero), unita (stringa), '
-      'range_min (numero), range_max (numero). Restituisci SOLO il JSON, '
-      'nessun testo aggiuntivo. Formato: {"valori": [{"nome": "...", '
-      '"valore": 0.0, "unita": "...", "range_min": 0.0, "range_max": 0.0}]}';
+      'Sei un assistente medico. Analizza questo referto del sangue. '
+      'Estrai la data del prelievo (o della firma del referto) e tutti i '
+      'valori in formato JSON. '
+      'Formato: {"data": "YYYY-MM-DD", "valori": [{"nome": "...", '
+      '"valore": 0.0, "unita": "...", "range_min": 0.0, "range_max": 0.0}]}. '
+      'Se la data non è leggibile ometti il campo "data". '
+      'Restituisci SOLO il JSON, nessun testo aggiuntivo.';
 
-  /// Fino a questo numero di pagine si manda tutto in una richiesta
-  /// sola; oltre, una pagina per volta (contesto e qualità migliori).
   static const _maxPagineInsieme = 2;
-
   static const _temperaturaPrimoTentativo = 0.2;
 
   final VisionClient _client;
@@ -49,37 +56,40 @@ class VisionRepository {
 
   String get nomeBackend => _client.nomeBackend;
 
-  /// Estrae i valori dalle pagine del referto (una PNG per pagina).
+  /// Estrae i valori e la data dalle pagine del referto.
   ///
   /// [onProgresso] riceve (pagina corrente, totale) prima di ogni
-  /// richiesta al modello — con poche pagine viene chiamato una volta
-  /// sola con (1, 1).
-  Future<List<ValoreEsame>> estraiValori(
+  /// richiesta al modello.
+  Future<RisultatoEstrazione> estraiValori(
     List<Uint8List> pagine, {
     void Function(int pagina, int totale)? onProgresso,
   }) async {
-    if (pagine.isEmpty) return const [];
+    if (pagine.isEmpty) return const RisultatoEstrazione(valori: []);
 
     if (pagine.length <= _maxPagineInsieme) {
       onProgresso?.call(1, 1);
       return _estraiConRetry(pagine);
     }
 
-    // Referto lungo: una pagina per volta, poi unione senza duplicati
-    // (lo stesso parametro può comparire su più pagine, es. riporti).
+    // Referto lungo: una pagina per volta, poi unione senza duplicati.
     final visti = <String>{};
-    final risultato = <ValoreEsame>[];
+    final valori = <ValoreEsame>[];
+    DateTime? dataEstratta;
+
     for (var i = 0; i < pagine.length; i++) {
       onProgresso?.call(i + 1, pagine.length);
-      final valori = await _estraiConRetry([pagine[i]]);
-      for (final v in valori) {
-        if (visti.add(v.nome.toLowerCase().trim())) risultato.add(v);
+      final risultato = await _estraiConRetry([pagine[i]]);
+      dataEstratta ??= risultato.data; // prima data trovata vince
+      for (final v in risultato.valori) {
+        if (visti.add(v.nome.toLowerCase().trim())) valori.add(v);
       }
     }
-    return risultato;
+    return RisultatoEstrazione(valori: valori, data: dataEstratta);
   }
 
-  Future<List<ValoreEsame>> _estraiConRetry(List<Uint8List> immagini) async {
+  Future<RisultatoEstrazione> _estraiConRetry(
+    List<Uint8List> immagini,
+  ) async {
     final primaRisposta = await _client.generaTesto(
       prompt: promptEstrazione,
       immaginiPng: immagini,
@@ -88,8 +98,6 @@ class VisionRepository {
     try {
       return parseRisposta(primaRisposta);
     } on FormatException {
-      // Retry deterministico: a temperatura 0 i modelli rispettano
-      // meglio il formato richiesto.
       final secondaRisposta = await _client.generaTesto(
         prompt: promptEstrazione,
         immaginiPng: immagini,
@@ -103,12 +111,12 @@ class VisionRepository {
     }
   }
 
-  /// Estrae la lista di valori dal testo del modello.
+  /// Estrae valori e data dal testo del modello.
   ///
-  /// Tollera i vizi tipici: code fence markdown, testo prima/dopo il
-  /// JSON, numeri come stringhe con la virgola, range mancanti.
+  /// Tollera code fence, testo attorno al JSON, virgole nei numeri,
+  /// range mancanti, date in vari formati italiani/ISO.
   /// Lancia [FormatException] se non c'è JSON utilizzabile.
-  static List<ValoreEsame> parseRisposta(String risposta) {
+  static RisultatoEstrazione parseRisposta(String risposta) {
     final json = _estraiOggettoJson(risposta);
     final valoriGrezzi = json['valori'];
     if (valoriGrezzi is! List) {
@@ -120,8 +128,6 @@ class VisionRepository {
       if (grezzo is! Map<String, dynamic>) continue;
       final nome = (grezzo['nome'] as String?)?.trim();
       final valore = _aNumero(grezzo['valore']);
-      // Senza nome o valore numerico la riga è inutilizzabile: si scarta
-      // invece di far fallire l'intero referto.
       if (nome == null || nome.isEmpty || valore == null) continue;
       valori.add(
         ValoreEsame(
@@ -135,11 +141,13 @@ class VisionRepository {
         ),
       );
     }
-    return valori;
+
+    return RisultatoEstrazione(
+      valori: valori,
+      data: _aData(json['data']),
+    );
   }
 
-  /// Trova e decodifica il primo oggetto JSON nel testo, ignorando code
-  /// fence e chiacchiere del modello.
   static Map<String, dynamic> _estraiOggettoJson(String testo) {
     final inizio = testo.indexOf('{');
     final fine = testo.lastIndexOf('}');
@@ -154,8 +162,6 @@ class VisionRepository {
     return decodificato;
   }
 
-  /// Converte in double ciò che i modelli mettono nei campi numerici:
-  /// numeri veri, stringhe ("5.2", "5,2", "< 0.5"), null.
   static double? _aNumero(Object? grezzo) {
     if (grezzo is num) return grezzo.toDouble();
     if (grezzo is String) {
@@ -165,5 +171,58 @@ class VisionRepository {
       return double.tryParse(pulito);
     }
     return null;
+  }
+
+  /// Converte la stringa data del modello in [DateTime].
+  ///
+  /// Accetta: `YYYY-MM-DD`, `DD/MM/YYYY`, `DD/MM/YY`, `DD.MM.YYYY`.
+  /// Scarta date future o precedenti all'anno 2000.
+  static DateTime? _aData(Object? grezzo) {
+    if (grezzo is! String) return null;
+    final s = grezzo.trim();
+    if (s.isEmpty) return null;
+
+    DateTime? candidata;
+
+    // ISO YYYY-MM-DD
+    candidata = DateTime.tryParse(s);
+
+    // DD/MM/YYYY o DD/MM/YY
+    if (candidata == null) {
+      final p = s.split('/');
+      if (p.length == 3) {
+        final g = int.tryParse(p[0]);
+        final m = int.tryParse(p[1]);
+        var a = int.tryParse(p[2]);
+        if (g != null && m != null && a != null) {
+          if (a < 100) a += 2000;
+          try {
+            candidata = DateTime(a, m, g);
+          } catch (_) {}
+        }
+      }
+    }
+
+    // DD.MM.YYYY
+    if (candidata == null) {
+      final p = s.split('.');
+      if (p.length == 3) {
+        final g = int.tryParse(p[0]);
+        final m = int.tryParse(p[1]);
+        var a = int.tryParse(p[2]);
+        if (g != null && m != null && a != null) {
+          if (a < 100) a += 2000;
+          try {
+            candidata = DateTime(a, m, g);
+          } catch (_) {}
+        }
+      }
+    }
+
+    if (candidata == null) return null;
+    // Scarta date impossibili
+    final ora = DateTime.now();
+    if (candidata.isAfter(ora) || candidata.year < 2000) return null;
+    return DateTime(candidata.year, candidata.month, candidata.day);
   }
 }
