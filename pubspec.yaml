@@ -1,0 +1,62 @@
+name: esami_tracker
+description: "EsamiTracker - tracking referti esami del sangue con estrazione AI locale e sync su Google Drive."
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Stato
+  flutter_riverpod: ^2.6.1
+
+  # Google Drive — niente login: consenso OAuth una tantum nel browser
+  # (loopback), poi refresh token persistito e accesso silenzioso.
+  googleapis: ^13.2.0
+  googleapis_auth: ^1.6.0
+  url_launcher: ^6.3.1
+  # Refresh token nel keystore di piattaforma (Keychain/Keystore/DPAPI),
+  # non in chiaro su disco.
+  flutter_secure_storage: ^10.3.1
+
+  # Grafici (Sessione 2)
+  fl_chart: ^0.69.2
+
+  # Import PDF (Sessione 2)
+  file_picker: ^8.1.4
+  http: ^1.2.2
+
+  # Cache locale
+  drift: ^2.21.0
+  drift_flutter: ^0.2.1
+  path_provider: ^2.1.5
+  path: ^1.9.0
+  sqlite3_flutter_libs: ^0.5.26
+
+  # Design system adattivo per piattaforma
+  dynamic_color: ^1.8.1        # Material You da wallpaper (Android 12+)
+  # NB: bloccato a 0.5.x — dalla 0.6.0 richiede meta ^1.17, in conflitto
+  # con il pin di flutter_test (meta 1.16) su Flutter 3.35.
+  liquid_glass_widgets: ^0.5.0 # superfici glass (macOS)
+  fluent_ui: ^4.15.1           # Fluent Design (Windows)
+
+  # Impostazioni
+  shared_preferences: ^2.3.3
+
+  intl: ^0.20.2
+  cupertino_icons: ^1.0.8
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+  drift_dev: ^2.21.0
+  build_runner: ^2.4.13
+  mocktail: ^1.0.4
+
+flutter:
+  uses-material-design: true
