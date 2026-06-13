@@ -1,3 +1,5 @@
+import 'dart:ui' show ImageFilter;
+
 import 'package:fluent_ui/fluent_ui.dart' as fluent;
 import 'package:flutter/material.dart';
 
@@ -22,11 +24,11 @@ class DestinazioneAdaptive {
   });
 }
 
-/// Shell di navigazione adattiva: ogni piattaforma usa il proprio pattern.
+/// Shell di navigazione adattiva.
 ///
 /// - **Android** — [NavigationBar] Material 3 in basso.
-/// - **macOS** — sidebar a sinistra con [NavigationRail], come le app
-///   native macOS (Note, Promemoria, Mail, Impostazioni di Sistema).
+/// - **macOS** — sidebar sinistra HIG-compliant: vibrancy, selezione accent,
+///   app name header, separatore 0.5px — come Notes, Reminders, Mail.
 /// - **Windows** — [fluent.NavigationView] con pane laterale Fluent.
 class AdaptiveNavigation extends StatelessWidget {
   final int indiceSelezionato;
@@ -75,17 +77,40 @@ class AdaptiveNavigation extends StatelessWidget {
   }
 
   Widget _macos(BuildContext context) {
-    return Scaffold(
-      backgroundColor: Colors.transparent,
-      body: Row(
-        children: [
-          _SidebarMacos(
-            indiceSelezionato: indiceSelezionato,
-            onSeleziona: onDestinazioneSelezionata,
-            destinazioni: destinazioni,
-          ),
-          Expanded(child: schermate[indiceSelezionato]),
-        ],
+    final schema = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    // Il gradiente copre l'intera finestra: sia la zona sidebar che il
+    // contenuto. La sidebar applica un BackdropFilter blur su questo
+    // sfondo → effetto vibrancy macOS.
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: isDark
+              ? [
+                  schema.surfaceContainerLowest,
+                  schema.surfaceContainerHigh,
+                ]
+              : [
+                  schema.surfaceContainerLowest,
+                  schema.surfaceContainerHigh,
+                ],
+        ),
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.transparent,
+        body: Row(
+          children: [
+            _SidebarMacos(
+              indiceSelezionato: indiceSelezionato,
+              onSeleziona: onDestinazioneSelezionata,
+              destinazioni: destinazioni,
+            ),
+            Expanded(child: schermate[indiceSelezionato]),
+          ],
+        ),
       ),
     );
   }
@@ -113,12 +138,14 @@ class AdaptiveNavigation extends StatelessWidget {
   }
 }
 
-/// Sidebar macOS nativa: colonna con voci icona+testo, selezione con
-/// rounded rect tenue, nessun indicatore Material.  Stessa struttura di
-/// Note, Promemoria, Fork, ecc.
-///
-/// Le voci con [DestinazioneAdaptive.isFooter] == true vengono raggruppate
-/// in fondo alla sidebar (separatore + fondo), come Impostazioni in Note.
+// ---- Sidebar macOS ----------------------------------------------------------
+
+/// Sidebar HIG-compliant:
+/// - Vibrancy: BackdropFilter blur + overlay semitrasparente.
+/// - Header zone con nome app (allineata alla zona traffic-light, 52px).
+/// - Selezione: sfondo accent-color pieno + testo/icona bianchi (macOS 13+).
+/// - Footer separato da divisore: Impostazioni in fondo come in Notes.
+/// - Separatore 0.5px lato destro tra sidebar e contenuto.
 class _SidebarMacos extends StatelessWidget {
   final int indiceSelezionato;
   final ValueChanged<int> onSeleziona;
@@ -133,12 +160,7 @@ class _SidebarMacos extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final schema = Theme.of(context).colorScheme;
-    final brightness = Theme.of(context).brightness;
-    final isDark = brightness == Brightness.dark;
-
-    final bgColor = isDark
-        ? const Color(0xFF1A1A1C)
-        : const Color(0xFFECECEE);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
 
     final principali = [
       for (var i = 0; i < destinazioni.length; i++)
@@ -149,40 +171,107 @@ class _SidebarMacos extends StatelessWidget {
         if (destinazioni[i].isFooter) (indice: i, dest: destinazioni[i]),
     ];
 
-    return Container(
-      width: 180,
-      color: bgColor,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const SizedBox(height: 52), // spazio traffic-light macOS
-          for (final item in principali)
-            _VoceSidebar(
-              destinazione: item.dest,
-              selezionata: item.indice == indiceSelezionato,
-              isDark: isDark,
-              accentColor: schema.primary,
-              onTap: () => onSeleziona(item.indice),
-            ),
-          const Spacer(),
-          if (footer.isNotEmpty) ...[
-            Divider(height: 1, thickness: 1, color: schema.outlineVariant),
-            for (final item in footer)
-              _VoceSidebar(
-                destinazione: item.dest,
-                selezionata: item.indice == indiceSelezionato,
-                isDark: isDark,
-                accentColor: schema.primary,
-                onTap: () => onSeleziona(item.indice),
+    // Colore overlay semitrasparente sopra il blur: crea l'effetto vibrancy.
+    final overlayColor = isDark
+        ? Colors.black.withValues(alpha: 0.50)
+        : Colors.white.withValues(alpha: 0.72);
+
+    // Separatore laterale destro tra sidebar e contenuto.
+    final separatoreColor = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : Colors.black.withValues(alpha: 0.10);
+
+    return SizedBox(
+      width: 200,
+      child: ClipRect(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: overlayColor,
+              border: Border(
+                right: BorderSide(color: separatoreColor, width: 0.5),
               ),
-            const SizedBox(height: 8),
-          ],
-        ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Zona header: 52px per i traffic-light + nome app
+                _SidebarHeader(isDark: isDark),
+                // Voci principali
+                for (final item in principali)
+                  _VoceSidebar(
+                    destinazione: item.dest,
+                    selezionata: item.indice == indiceSelezionato,
+                    isDark: isDark,
+                    accentColor: schema.primary,
+                    onTap: () => onSeleziona(item.indice),
+                  ),
+                const Spacer(),
+                // Footer (Impostazioni)
+                if (footer.isNotEmpty) ...[
+                  Divider(
+                    height: 1,
+                    thickness: 0.5,
+                    color: separatoreColor,
+                    indent: 12,
+                    endIndent: 12,
+                  ),
+                  for (final item in footer)
+                    _VoceSidebar(
+                      destinazione: item.dest,
+                      selezionata: item.indice == indiceSelezionato,
+                      isDark: isDark,
+                      accentColor: schema.primary,
+                      onTap: () => onSeleziona(item.indice),
+                    ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }
 }
 
+/// Header della sidebar: zona 52px per i traffic-light con nome app.
+/// Su macOS, Note e Promemoria mostrano il nome dell'app in quest'area.
+class _SidebarHeader extends StatelessWidget {
+  final bool isDark;
+
+  const _SidebarHeader({required this.isDark});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 52,
+      child: Align(
+        alignment: Alignment.bottomLeft,
+        child: Padding(
+          padding: const EdgeInsets.only(left: 16, bottom: 10),
+          child: Text(
+            'EsamiTracker',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.1,
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.45)
+                  : Colors.black.withValues(alpha: 0.35),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Voce sidebar con:
+/// - Selezione: sfondo accent pieno, testo e icona bianchi (macOS 13+/14+/15+).
+/// - Hover: overlay semitrasparente, nessun sfondo quando inattiva.
+/// - Dimensioni HIG: 30px altezza riga, icona 16px, testo 13pt semibold.
 class _VoceSidebar extends StatefulWidget {
   final DestinazioneAdaptive destinazione;
   final bool selezionata;
@@ -207,31 +296,34 @@ class _VoceSidebarState extends State<_VoceSidebar> {
 
   @override
   Widget build(BuildContext context) {
-    final Color bgSelezionato = widget.isDark
-        ? Colors.white.withValues(alpha: 0.12)
-        : Colors.black.withValues(alpha: 0.08);
+    // macOS 13+ (Ventura, Sonoma, Sequoia, Tahoe):
+    // selezione = sfondo accent pieno, testo/icona bianchi.
+    final Color bgSelezionato = widget.accentColor;
     final Color bgHover = widget.isDark
-        ? Colors.white.withValues(alpha: 0.06)
-        : Colors.black.withValues(alpha: 0.04);
+        ? Colors.white.withValues(alpha: 0.08)
+        : Colors.black.withValues(alpha: 0.05);
 
-    final Color iconColor = widget.selezionata
-        ? widget.accentColor
-        : (widget.isDark
-            ? const Color(0xFFB0B0B5)
-            : const Color(0xFF6E6E73));
-    final Color textColor = widget.selezionata
-        ? (widget.isDark ? Colors.white : const Color(0xFF1D1D1F))
-        : (widget.isDark
-            ? const Color(0xFFB0B0B5)
-            : const Color(0xFF6E6E73));
+    final Color iconColor;
+    final Color textColor;
+    if (widget.selezionata) {
+      iconColor = Colors.white;
+      textColor = Colors.white;
+    } else {
+      final inactive = widget.isDark
+          ? const Color(0xFFB0B0B5)
+          : const Color(0xFF6E6E73);
+      iconColor = inactive;
+      textColor = inactive;
+    }
 
     return MouseRegion(
+      cursor: SystemMouseCursors.click,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: GestureDetector(
         onTap: widget.onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 120),
             decoration: BoxDecoration(
@@ -250,7 +342,7 @@ class _VoceSidebarState extends State<_VoceSidebar> {
                   size: 16,
                   color: iconColor,
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 9),
                 Expanded(
                   child: Text(
                     widget.destinazione.etichetta,
@@ -259,6 +351,7 @@ class _VoceSidebarState extends State<_VoceSidebar> {
                       fontWeight: widget.selezionata
                           ? FontWeight.w600
                           : FontWeight.w400,
+                      letterSpacing: -0.1,
                       color: textColor,
                     ),
                   ),

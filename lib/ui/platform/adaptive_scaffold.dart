@@ -3,13 +3,11 @@ import 'package:flutter/material.dart';
 
 import 'adaptive_platform.dart';
 
-/// Scaffold di schermata adattivo: stessa API su tutte le piattaforme,
-/// shell diversa. Il [body] (layout interno della schermata) passa
-/// invariato.
+/// Scaffold di schermata adattivo.
 ///
 /// - **Android** — [Scaffold] + [AppBar] Material 3.
-/// - **macOS** — [Scaffold] trasparente sopra un gradiente, così le
-///   superfici liquid glass hanno uno sfondo da rifrangere.
+/// - **macOS** — nessun Material AppBar; toolbar nativa 52px allineata alla
+///   zona traffic-light della sidebar. Titolo + azioni nel toolbar, poi body.
 /// - **Windows** — [fluent.ScaffoldPage] con header Fluent.
 class AdaptiveScaffold extends StatelessWidget {
   final String titolo;
@@ -48,6 +46,12 @@ class AdaptiveScaffold extends StatelessWidget {
   }
 }
 
+/// Scaffold macOS HIG-compliant.
+///
+/// Non usa [AppBar] Material. In cima mostra [_MacosToolbar] (52px), allineata
+/// verticalmente con la zona header della sidebar (stessa altezza). Sotto il
+/// toolbar c'è il corpo della schermata con lo sfondo trasparente che lascia
+/// vedere il gradiente globale della shell.
 class _ScaffoldMacos extends StatelessWidget {
   final String titolo;
   final List<Widget> azioni;
@@ -61,22 +65,67 @@ class _ScaffoldMacos extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _MacosToolbar(titolo: titolo, azioni: azioni),
+          Expanded(child: body),
+        ],
+      ),
+    );
+  }
+}
+
+/// Toolbar HIG macOS.
+///
+/// - Altezza 52px: si allinea orizzontalmente con la zona header della sidebar
+///   (che riserva 52px per i traffic-light + nome app), creando l'illusione di
+///   una toolbar unificata che copre tutta la larghezza della finestra.
+/// - Titolo: 15pt semibold, spacing negativo (SF Pro style).
+/// - Azioni: destra, con icone borderless stile macOS nativo.
+/// - Separatore inferiore: 0.5px per separare toolbar da contenuto
+///   (come in Mail, Promemoria, Note).
+class _MacosToolbar extends StatelessWidget {
+  final String titolo;
+  final List<Widget> azioni;
+
+  const _MacosToolbar({required this.titolo, required this.azioni});
+
+  @override
+  Widget build(BuildContext context) {
     final schema = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      // Gradiente di sfondo: dà profondità al blur delle superfici glass.
-      // Toni neutri di superficie: una tinta colorata qui impasta tutta
-      // la schermata (testo, barre, card).
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+
+    final separatoreColor = isDark
+        ? Colors.white.withValues(alpha: 0.08)
+        : Colors.black.withValues(alpha: 0.10);
+
+    return Container(
+      height: 52,
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [schema.surfaceContainerLowest, schema.surfaceContainerHigh],
+        border: Border(
+          bottom: BorderSide(color: separatoreColor, width: 0.5),
         ),
       ),
-      child: Scaffold(
-        backgroundColor: Colors.transparent,
-        appBar: AppBar(title: Text(titolo), actions: azioni),
-        body: body,
+      padding: const EdgeInsets.symmetric(horizontal: 20),
+      child: Row(
+        children: [
+          Text(
+            titolo,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+              letterSpacing: -0.3,
+              color: schema.onSurface,
+            ),
+          ),
+          const Spacer(),
+          if (azioni.isNotEmpty) ...[
+            ...azioni,
+          ],
+        ],
       ),
     );
   }

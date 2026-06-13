@@ -68,7 +68,7 @@ class _ListaGrafici extends StatelessWidget {
 class _CardGrafico extends StatefulWidget {
   final SerieParametro serie;
 
-  const _CardGrafico({required this.serie, super.key});
+  const _CardGrafico({required this.serie});
 
   @override
   State<_CardGrafico> createState() => _CardGraficoState();

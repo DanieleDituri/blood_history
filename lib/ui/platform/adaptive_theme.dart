@@ -21,7 +21,7 @@ class AdaptiveTheme {
     },
   );
 
-  /// Tema Material (Android e macOS). Su Android [dinamico] arriva dal
+  /// Tema Material (Android). Su Android [dinamico] arriva dal
   /// wallpaper (Material You); altrove o in fallback si usa il seed.
   static ThemeData material(Brightness brightness, {ColorScheme? dinamico}) {
     final schema =
@@ -38,17 +38,37 @@ class AdaptiveTheme {
   /// non è leggibile.
   static const bluApple = Color(0xFF007AFF);
 
-  /// Variante macOS: niente tinta Material sulle superfici — grigi
-  /// neutri come le app native — e [accent] (l'accent color di sistema
-  /// dell'utente) come primario. Sfondo trasparente per il liquid glass.
+  // ---- Tipografia macOS (SF Pro sizing) -----------------------------------
+  // Dimensioni e spacing SF Pro — colori ereditati da Material automaticamente.
+  // SF Pro caratteristiche: spacing negativo sui titoli, 0 sul body.
+  static const _testMacos = TextTheme(
+    displayLarge:  TextStyle(fontSize: 28, fontWeight: FontWeight.w700, letterSpacing: -0.6),
+    displayMedium: TextStyle(fontSize: 24, fontWeight: FontWeight.w600, letterSpacing: -0.5),
+    displaySmall:  TextStyle(fontSize: 20, fontWeight: FontWeight.w600, letterSpacing: -0.4),
+    headlineLarge:  TextStyle(fontSize: 20, fontWeight: FontWeight.w700, letterSpacing: -0.4),
+    headlineMedium: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, letterSpacing: -0.3),
+    headlineSmall:  TextStyle(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: -0.2),
+    titleLarge:  TextStyle(fontSize: 15, fontWeight: FontWeight.w600, letterSpacing: -0.2),
+    titleMedium: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, letterSpacing: -0.1),
+    titleSmall:  TextStyle(fontSize: 12, fontWeight: FontWeight.w600, letterSpacing: -0.1),
+    bodyLarge:   TextStyle(fontSize: 14, fontWeight: FontWeight.w400, letterSpacing:  0.0),
+    bodyMedium:  TextStyle(fontSize: 13, fontWeight: FontWeight.w400, letterSpacing:  0.0),
+    bodySmall:   TextStyle(fontSize: 11, fontWeight: FontWeight.w400, letterSpacing:  0.06),
+    labelLarge:  TextStyle(fontSize: 13, fontWeight: FontWeight.w500, letterSpacing:  0.0),
+    labelMedium: TextStyle(fontSize: 12, fontWeight: FontWeight.w400, letterSpacing:  0.04),
+    labelSmall:  TextStyle(fontSize: 11, fontWeight: FontWeight.w400, letterSpacing:  0.06),
+  );
+
+  /// Variante macOS: grigi neutri come le app native, accent color di sistema,
+  /// sfondo trasparente per il liquid glass, tipografia SF Pro.
   static ThemeData materialMacos(Brightness brightness, {Color? accent}) {
     final scuro = brightness == Brightness.dark;
     final base = ColorScheme.fromSeed(
       seedColor: accent ?? bluApple,
       brightness: brightness,
     );
-    // Material 3 tinge le superfici col primario: qui le sostituiamo
-    // con i grigi neutri tipici delle finestre macOS.
+    // Material 3 tinge le superfici col primario: le sostituiamo con
+    // grigi neutri tipici delle finestre macOS.
     final schema = scuro
         ? base.copyWith(
             surface: const Color(0xFF1E1E1E),
@@ -70,10 +90,59 @@ class AdaptiveTheme {
             onSurface: const Color(0xFF1D1D1F),
             onSurfaceVariant: const Color(0xFF6E6E73),
           );
+
     return ThemeData(
       colorScheme: schema,
       useMaterial3: true,
+      textTheme: _testMacos,
       pageTransitionsTheme: _transizioni,
+      // Input compatti stile macOS (6px raggio, padding ridotto)
+      inputDecorationTheme: InputDecorationTheme(
+        border: OutlineInputBorder(
+          borderRadius: const BorderRadius.all(Radius.circular(6)),
+          borderSide: BorderSide(
+            color: scuro
+                ? Colors.white.withValues(alpha: 0.18)
+                : Colors.black.withValues(alpha: 0.18),
+            width: 0.5,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: const BorderRadius.all(Radius.circular(6)),
+          borderSide: BorderSide(
+            color: scuro
+                ? Colors.white.withValues(alpha: 0.18)
+                : Colors.black.withValues(alpha: 0.18),
+            width: 0.5,
+          ),
+        ),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        isDense: true,
+      ),
+      // Card arrotondate come finestre macOS (10px)
+      cardTheme: const CardThemeData(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(10)),
+        ),
+        margin: EdgeInsets.zero,
+      ),
+      // Scrollbar overlay stile macOS: appare solo on-hover, si nasconde
+      // a riposo — come le scrollbar native di Finder, Note, ecc.
+      scrollbarTheme: ScrollbarThemeData(
+        thumbVisibility: WidgetStateProperty.all(false),
+        trackVisibility: WidgetStateProperty.all(false),
+        radius: const Radius.circular(10),
+        thickness: WidgetStateProperty.all(6),
+        thumbColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.hovered) ||
+              states.contains(WidgetState.dragged)) {
+            return scuro
+                ? Colors.white.withValues(alpha: 0.40)
+                : Colors.black.withValues(alpha: 0.30);
+          }
+          return Colors.transparent;
+        }),
+      ),
     ).copyWith(
       scaffoldBackgroundColor: Colors.transparent,
       appBarTheme: const AppBarTheme(
@@ -94,8 +163,7 @@ class AdaptiveTheme {
 
 /// Transizione personalizzata: fade + leggero slide verso l'alto
 /// (simile all'animazione di Material You su Android 12).
-class _FadeSlideTransitionBuilder
-    implements PageTransitionsBuilder {
+class _FadeSlideTransitionBuilder extends PageTransitionsBuilder {
   const _FadeSlideTransitionBuilder();
 
   @override
@@ -125,13 +193,9 @@ class _FadeSlideTransitionBuilder
 
 /// Radice dell'app: sceglie l'`*App` giusta per la piattaforma.
 ///
-/// - **Android** — [MaterialApp] con dynamic color (Material You),
-///   fallback al seed, e `themeMode: ThemeMode.system`.
-/// - **macOS** — [MaterialApp] con tema predisposto per le superfici
-///   liquid glass e `themeMode: ThemeMode.system`.
-/// - **Windows** — [fluent.FluentApp]; un `builder` inserisce un ponte
-///   Material (Theme + Material trasparente + localizzazioni) così i
-///   widget Material usati DENTRO le schermate continuano a funzionare.
+/// - **Android** — [MaterialApp] con dynamic color (Material You).
+/// - **macOS** — [MaterialApp] con tema HIG-compliant e liquid glass.
+/// - **Windows** — [fluent.FluentApp] con bridge Material.
 class AdaptiveApp extends StatelessWidget {
   final String titolo;
   final Widget home;
@@ -155,7 +219,6 @@ class AdaptiveApp extends StatelessWidget {
         builder: (context, scuro) => MaterialApp(
           title: titolo,
           debugShowCheckedModeBanner: false,
-          // Segue automaticamente la preferenza di sistema
           themeMode: ThemeMode.system,
           theme: AdaptiveTheme.material(
             Brightness.light,
@@ -171,8 +234,7 @@ class AdaptiveApp extends StatelessWidget {
     );
   }
 
-  /// Palette dinamica dal wallpaper (Android 12+); null se non disponibile
-  /// (Android <12, altre piattaforme, test).
+  /// Palette dinamica dal wallpaper (Android 12+); null se non disponibile.
   static Future<ColorScheme?> _schemaDinamico(Brightness brightness) async {
     try {
       final palette = await DynamicColorPlugin.getCorePalette();
@@ -202,8 +264,7 @@ class AdaptiveApp extends StatelessWidget {
     );
   }
 
-  /// Accent color scelto dall'utente in Impostazioni di Sistema (macOS);
-  /// null se non disponibile (test, versioni vecchie) → blu Apple.
+  /// Accent color scelto dall'utente in Impostazioni di Sistema (macOS).
   static Future<Color?> _accentDiSistema() async {
     try {
       return await DynamicColorPlugin.getAccentColor();
@@ -216,7 +277,6 @@ class AdaptiveApp extends StatelessWidget {
     return fluent.FluentApp(
       title: titolo,
       debugShowCheckedModeBanner: false,
-      // FluentApp rispetta già la modalità scura del sistema.
       theme: AdaptiveTheme.fluentTheme(Brightness.light),
       darkTheme: AdaptiveTheme.fluentTheme(Brightness.dark),
       localizationsDelegates: const [
@@ -224,8 +284,6 @@ class AdaptiveApp extends StatelessWidget {
         DefaultMaterialLocalizations.delegate,
         DefaultWidgetsLocalizations.delegate,
       ],
-      // Ponte Material: le schermate interne usano Theme.of, InkWell,
-      // Tooltip… che richiedono un Theme e un Material ancestor.
       builder: (context, child) {
         final brightness = fluent.FluentTheme.of(context).brightness;
         return Theme(

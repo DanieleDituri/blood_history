@@ -18,6 +18,12 @@ class TabellaValoriEditor extends StatefulWidget {
   /// Data letta dal referto; se null l'editor usa la data odierna.
   final DateTime? dataIniziale;
 
+  /// Commento in linguaggio naturale generato dal LLM dopo l'estrazione.
+  final String? analisi;
+
+  /// True mentre l'analisi è in corso in background.
+  final bool analisiInCorso;
+
   const TabellaValoriEditor({
     super.key,
     required this.valoriIniziali,
@@ -25,6 +31,8 @@ class TabellaValoriEditor extends StatefulWidget {
     required this.onSalva,
     required this.onAnnulla,
     this.dataIniziale,
+    this.analisi,
+    this.analisiInCorso = false,
   });
 
   @override
@@ -116,6 +124,13 @@ class _TabellaValoriEditorState extends State<TabellaValoriEditor> {
               ],
             ),
           ),
+          if (widget.analisi != null || widget.analisiInCorso) ...[
+            const SizedBox(height: 8),
+            _CardAnalisi(
+              testo: widget.analisi,
+              inCorso: widget.analisiInCorso,
+            ),
+          ],
           const SizedBox(height: 8),
           _IntestazioneTabella(stile: tema.textTheme.labelSmall),
           Expanded(
@@ -158,6 +173,111 @@ class _TabellaValoriEditorState extends State<TabellaValoriEditor> {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Card con il commento clinico in linguaggio naturale generato dal LLM.
+///
+/// Mostra uno stato di caricamento mentre [inCorso] è true, poi il testo
+/// quando arriva. In fondo compare sempre un avvertimento sull'affidabilità.
+class _CardAnalisi extends StatefulWidget {
+  final String? testo;
+  final bool inCorso;
+
+  const _CardAnalisi({required this.testo, required this.inCorso});
+
+  @override
+  State<_CardAnalisi> createState() => _CardAnalisiState();
+}
+
+class _CardAnalisiState extends State<_CardAnalisi> {
+  bool _espansa = true;
+
+  @override
+  Widget build(BuildContext context) {
+    final tema = Theme.of(context);
+    final schema = tema.colorScheme;
+    final onContainer = schema.onSecondaryContainer;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: Card(
+        color: schema.secondaryContainer,
+        elevation: 0,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Header collassabile
+            InkWell(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+              onTap: widget.inCorso
+                  ? null
+                  : () => setState(() => _espansa = !_espansa),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                child: Row(
+                  children: [
+                    if (widget.inCorso)
+                      SizedBox(
+                        width: 14,
+                        height: 14,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: onContainer,
+                        ),
+                      )
+                    else
+                      Icon(Icons.psychology_outlined, size: 16, color: onContainer),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        widget.inCorso
+                            ? 'Generazione commento clinico…'
+                            : 'Commento clinico (AI)',
+                        style: tema.textTheme.labelMedium?.copyWith(
+                          color: onContainer,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    if (!widget.inCorso)
+                      Icon(
+                        _espansa ? Icons.expand_less : Icons.expand_more,
+                        size: 16,
+                        color: onContainer,
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            // Corpo: testo analisi + disclaimer
+            if (!widget.inCorso && _espansa && widget.testo != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      widget.testo!,
+                      style: tema.textTheme.bodySmall?.copyWith(color: onContainer),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '⚠ Questo commento è generato da un modello AI locale '
+                      'e può contenere imprecisioni. Non sostituisce il parere '
+                      'di un medico.',
+                      style: tema.textTheme.labelSmall?.copyWith(
+                        color: onContainer.withValues(alpha: 0.55),
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
       ),
     );
   }

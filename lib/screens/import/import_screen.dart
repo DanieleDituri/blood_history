@@ -1,13 +1,20 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:desktop_drop/desktop_drop.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/costanti.dart';
 import '../../models/valore_esame.dart';
+import '../../providers/providers.dart';
 import '../../repositories/vision_repository.dart';
 import '../../services/android/android_import_service.dart';
+import '../../services/pdf/ocr_parser.dart';
+import '../../services/pdf/pdf_testo_estrattore.dart';
 import '../../ui/platform/adaptive_button.dart';
 import '../../ui/platform/adaptive_platform.dart';
 import '../../ui/platform/adaptive_scaffold.dart';
@@ -17,8 +24,7 @@ import 'tabella_valori_editor.dart';
 /// Import di un referto: selezione PDF → estrazione col modello locale →
 /// anteprima editabile → salvataggio su Drive + cache locale.
 ///
-/// Su Android: ML Kit Document Scanner + Gemini Nano (AICore).
-/// Fallback a inserimento manuale se AICore non è supportato.
+/// Su Android: ML Kit Document Scanner + OCR on-device (o Gemma 2B se scaricato).
 class ImportScreen extends ConsumerWidget {
   const ImportScreen({super.key});
 
@@ -30,27 +36,39 @@ class ImportScreen extends ConsumerWidget {
 
     final stato = ref.watch(importControllerProvider);
     final controller = ref.read(importControllerProvider.notifier);
+    final modalita = ref.watch(modalitaDesktopProvider).valueOrNull ?? 'vision';
 
     return AdaptiveScaffold(
       titolo: 'Import',
       body: _DropPdf(
-        // Il drop ha senso solo quando non c'è già un import in corso.
         abilitato: stato is ImportInattivo || stato is ImportErrore,
         onPdf: controller.importaPdf,
         child: switch (stato) {
           ImportInattivo() => _Inattivo(
             onSeleziona: controller.selezionaEdEstrai,
+            usaOcr: modalita == 'ocr',
           ),
           ImportInCorso(:final messaggio) => _InCorso(messaggio: messaggio),
           ImportErrore() => _Errore(stato: stato, controller: controller),
-          ImportAnteprima(:final valori, :final avviso, :final dataEsame) =>
+          ImportAnteprima(
+            :final valori,
+            :final avviso,
+            :final dataEsame,
+            :final analisi,
+            :final analisiInCorso,
+          ) =>
             TabellaValoriEditor(
-              // Una key nuova per ogni anteprima: i controller di testo
-              // ripartono dai valori estratti.
-              key: ObjectKey(stato),
+              // Key stabile basata sui valori iniziali: non cambia quando
+              // arriva l'analisi in background, evitando la perdita degli
+              // edit dell'utente.
+              key: ValueKey(
+                'anteprima-${valori.length}-${dataEsame?.toIso8601String() ?? ''}',
+              ),
               valoriIniziali: valori,
               avviso: avviso,
               dataIniziale: dataEsame,
+              analisi: analisi,
+              analisiInCorso: analisiInCorso,
               onSalva: controller.salva,
               onAnnulla: controller.nuovoImport,
             ),
@@ -63,11 +81,16 @@ class ImportScreen extends ConsumerWidget {
 
 class _Inattivo extends StatelessWidget {
   final VoidCallback onSeleziona;
+  final bool usaOcr;
 
-  const _Inattivo({required this.onSeleziona});
+  const _Inattivo({required this.onSeleziona, this.usaOcr = false});
 
   @override
   Widget build(BuildContext context) {
+    final descrizione = usaOcr
+        ? 'Modalità OCR: estrae il testo dal PDF e lo analizza con il modello testuale'
+        : 'Modalità Vision: rasterizza il PDF e lo analizza con il modello vision';
+
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -84,8 +107,9 @@ class _Inattivo extends StatelessWidget {
           ),
           const SizedBox(height: 8),
           Text(
-            'L\'analisi avviene in locale con il tuo modello vision',
+            descrizione,
             style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
           ),
           const SizedBox(height: 24),
           AdaptiveButton(
@@ -233,91 +257,192 @@ class _Salvato extends StatelessWidget {
 
 // ─── Schermata Import per Android ──────────────────────────────────────────
 
-/// Stati specifici della schermata Android.
 enum _StatoAndroid { inAttesa, scansione, estrazione, anteprima, errore }
 
-class _AndroidImportScreen extends StatefulWidget {
+class _AndroidImportScreen extends ConsumerStatefulWidget {
   const _AndroidImportScreen();
 
   @override
-  State<_AndroidImportScreen> createState() => _AndroidImportScreenState();
+  ConsumerState<_AndroidImportScreen> createState() =>
+      _AndroidImportScreenState();
 }
 
-class _AndroidImportScreenState extends State<_AndroidImportScreen> {
+class _AndroidImportScreenState extends ConsumerState<_AndroidImportScreen> {
   _StatoAndroid _stato = _StatoAndroid.inAttesa;
-  bool? _aiCoreDisponibile;
   String? _errore;
-  List<String> _base64Images = [];
+  bool _llmFallback = false;
   List<ValoreEsame> _valoriEstratti = [];
   DateTime? _dataEsame;
+  String? _analisi;
+  bool _analisiInCorso = false;
+
+  // Gemma download inline
+  bool _llmDisponibile = false;
+  bool _downloading = false;
+  int _downloadPct = 0;
+  String _downloadLabel = '';
+  StreamSubscription<ProgressoDownload>? _downloadSub;
 
   @override
   void initState() {
     super.initState();
-    _verificaAiCore();
+    _aggiornaLlmDisponibile();
   }
 
-  Future<void> _verificaAiCore() async {
-    final supportato = await AndroidImportService.isAiCoreSupported();
-    if (mounted) setState(() => _aiCoreDisponibile = supportato);
+  @override
+  void dispose() {
+    _downloadSub?.cancel();
+    super.dispose();
   }
 
-  Future<void> _avviaFlusso() async {
+  Future<void> _aggiornaLlmDisponibile() async {
+    final ok = await AndroidImportService.isLlmDisponibile();
+    if (mounted) setState(() => _llmDisponibile = ok);
+  }
+
+  Future<void> _avviaDownloadGemma() async {
+    final prefs = await SharedPreferences.getInstance();
+    final token = prefs.getString(Costanti.prefHuggingFaceToken) ?? '';
     setState(() {
-      _stato = _StatoAndroid.scansione;
-      _errore = null;
+      _downloading = true;
+      _downloadPct = 0;
+      _downloadLabel = '';
     });
-
+    _downloadSub = AndroidImportService.progressoDownload.listen(
+      (p) {
+        if (mounted) {
+          setState(() {
+            _downloadPct = p.percentuale;
+            _downloadLabel = p.etichetta;
+          });
+        }
+      },
+      onError: (_) {
+        if (mounted) setState(() => _downloading = false);
+      },
+    );
     try {
-      final images = await AndroidImportService.avviaScanner();
-      if (images == null || images.isEmpty) {
-        // Utente ha annullato
-        setState(() => _stato = _StatoAndroid.inAttesa);
-        return;
-      }
-      _base64Images = images;
-
-      if (_aiCoreDisponibile == true) {
-        setState(() => _stato = _StatoAndroid.estrazione);
-        final jsonRaw = await AndroidImportService.estraiTesto(images);
-        _analizzaJson(jsonRaw);
-      } else {
-        // Niente AICore: vai direttamente all'inserimento manuale
-        setState(() {
-          _valoriEstratti = [];
-          _dataEsame = null;
-          _stato = _StatoAndroid.anteprima;
-        });
-      }
+      await AndroidImportService.scaricaModello(token: token);
+      if (mounted) setState(() { _llmDisponibile = true; _downloading = false; });
     } on AndroidImportException catch (e) {
-      setState(() {
-        _errore = e.messaggio;
-        _stato = _StatoAndroid.errore;
-      });
-    } catch (e) {
-      setState(() {
-        _errore = 'Errore inatteso: $e';
-        _stato = _StatoAndroid.errore;
-      });
+      if (mounted) {
+        setState(() => _downloading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Download fallito: ${e.messaggio}')),
+        );
+      }
+    } finally {
+      await _downloadSub?.cancel();
+      _downloadSub = null;
     }
   }
 
-  void _analizzaJson(String jsonRaw) {
+  // ── Flusso fotocamera ───────────────────────────────────────────────────
+
+  Future<void> _avviaFlussoScanner() async {
+    setState(() { _stato = _StatoAndroid.scansione; _errore = null; _llmFallback = false; });
     try {
-      // Riutilizza il parser già esistente in VisionRepository (tollerante
-      // a code fence, testo attorno, virgole decimali italiane ecc.).
-      final risultato = VisionRepository.parseRisposta(jsonRaw);
+      final images = await AndroidImportService.avviaScanner();
+      if (images == null || images.isEmpty) {
+        setState(() => _stato = _StatoAndroid.inAttesa);
+        return;
+      }
+      setState(() => _stato = _StatoAndroid.estrazione);
+      final modalita = ref.read(modalitaAndroidProvider).valueOrNull ?? 'ocr';
+      String jsonRaw;
+      if (modalita == 'llm' && _llmDisponibile) {
+        jsonRaw = await AndroidImportService.estraiConLlm(images);
+      } else {
+        if (modalita == 'llm') setState(() => _llmFallback = true);
+        jsonRaw = await AndroidImportService.estraiConOcr(images);
+      }
+      await _analizzaJson(jsonRaw);
+    } on AndroidImportException catch (e) {
+      setState(() { _errore = e.messaggio; _stato = _StatoAndroid.errore; });
+    } catch (e) {
+      setState(() { _errore = 'Errore inatteso: $e'; _stato = _StatoAndroid.errore; });
+    }
+  }
+
+  // ── Flusso PDF ──────────────────────────────────────────────────────────
+
+  Future<void> _avviaFlussoImportPdf() async {
+    final esito = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf'],
+      withData: true,
+    );
+    final pdfBytes = esito?.files.singleOrNull?.bytes;
+    if (pdfBytes == null) return;
+
+    setState(() { _stato = _StatoAndroid.estrazione; _errore = null; _llmFallback = false; });
+    try {
+      final modalita = ref.read(modalitaAndroidProvider).valueOrNull ?? 'ocr';
+      final testo = await PdfTestoEstrattore().estraiTesto(pdfBytes);
+
+      if (modalita == 'llm' && _llmDisponibile) {
+        // Manda il testo estratto direttamente a Gemma 2B
+        final jsonRaw = await AndroidImportService.estraiTestoConLlm(testo);
+        await _analizzaJson(jsonRaw);
+      } else {
+        // Pure OCR (o fallback se Gemma non disponibile)
+        if (modalita == 'llm') setState(() => _llmFallback = true);
+        final risultato = OcrParser.parseTesto(testo);
+        await _mostraAnteprima(risultato.valori, risultato.data, analisi: false);
+      }
+    } on PdfTestoEstrattoreException {
       setState(() {
-        _valoriEstratti = risultato.valori;
-        _dataEsame = risultato.data;
-        _stato = _StatoAndroid.anteprima;
+        _errore = 'Nessun testo trovato nel PDF. '
+            'Per referti scansionati usa la fotocamera.';
+        _stato = _StatoAndroid.errore;
       });
+    } on AndroidImportException catch (e) {
+      setState(() { _errore = e.messaggio; _stato = _StatoAndroid.errore; });
+    } catch (e) {
+      setState(() { _errore = 'Errore inatteso: $e'; _stato = _StatoAndroid.errore; });
+    }
+  }
+
+  // ── Parsing e anteprima ─────────────────────────────────────────────────
+
+  Future<void> _analizzaJson(String jsonRaw) async {
+    List<ValoreEsame> valori = [];
+    DateTime? data;
+    try {
+      final r = VisionRepository.parseRisposta(jsonRaw);
+      valori = r.valori;
+      data = r.data;
+    } catch (_) {}
+    final modalita = ref.read(modalitaAndroidProvider).valueOrNull;
+    await _mostraAnteprima(
+      valori,
+      data,
+      analisi: modalita == 'llm' && valori.isNotEmpty,
+    );
+  }
+
+  Future<void> _mostraAnteprima(
+    List<ValoreEsame> valori,
+    DateTime? data, {
+    required bool analisi,
+  }) async {
+    setState(() {
+      _valoriEstratti = valori;
+      _dataEsame = data;
+      _analisi = null;
+      _analisiInCorso = analisi;
+      _stato = _StatoAndroid.anteprima;
+    });
+    if (analisi) _avviaAnalisiAndroid(valori);
+  }
+
+  void _avviaAnalisiAndroid(List<ValoreEsame> valori) async {
+    try {
+      final vision = await ref.read(visionRepositoryProvider.future);
+      final a = await vision.analisiValori(valori);
+      if (mounted) setState(() { _analisi = a; _analisiInCorso = false; });
     } catch (_) {
-      setState(() {
-        _valoriEstratti = [];
-        _dataEsame = null;
-        _stato = _StatoAndroid.anteprima;
-      });
+      if (mounted) setState(() => _analisiInCorso = false);
     }
   }
 
@@ -325,34 +450,40 @@ class _AndroidImportScreenState extends State<_AndroidImportScreen> {
     setState(() {
       _stato = _StatoAndroid.inAttesa;
       _errore = null;
-      _base64Images = [];
+      _llmFallback = false;
       _valoriEstratti = [];
       _dataEsame = null;
+      _analisi = null;
+      _analisiInCorso = false;
     });
   }
 
   @override
   Widget build(BuildContext context) {
+    final modalita = ref.watch(modalitaAndroidProvider).valueOrNull ?? 'ocr';
+
     return AdaptiveScaffold(
       titolo: 'Import',
       body: Column(
         children: [
-          // Banner Gemini Nano non disponibile
-          if (_aiCoreDisponibile == false)
-            _BannerFallback(),
-
+          if (_llmFallback)
+            _BannerLlmFallback(
+              onVaiImpostazioni: () {},
+            ),
           Expanded(
             child: switch (_stato) {
               _StatoAndroid.inAttesa => _InAttivaAndroid(
-                onAvvia: _avviaFlusso,
-                aiCoreOk: _aiCoreDisponibile,
+                onAvviaScanner: _avviaFlussoScanner,
+                onImportaPdf: _avviaFlussoImportPdf,
+                usaLlm: modalita == 'llm',
+                llmDisponibile: _llmDisponibile,
+                downloading: _downloading,
+                downloadPct: _downloadPct,
+                downloadLabel: _downloadLabel,
+                onScaricaLlm: _avviaDownloadGemma,
               ),
-              _StatoAndroid.scansione => const _InCorso(
-                messaggio: 'Avvio scanner…',
-              ),
-              _StatoAndroid.estrazione => const _InCorso(
-                messaggio: 'Gemini Nano sta analizzando il referto…',
-              ),
+              _StatoAndroid.scansione => const _InCorso(messaggio: 'Avvio scanner…'),
+              _StatoAndroid.estrazione => const _InCorso(messaggio: 'Estrazione valori…'),
               _StatoAndroid.errore => Center(
                 child: Padding(
                   padding: const EdgeInsets.all(24),
@@ -365,34 +496,49 @@ class _AndroidImportScreenState extends State<_AndroidImportScreen> {
                         color: Theme.of(context).colorScheme.error,
                       ),
                       const SizedBox(height: 12),
-                      Text(_errore ?? 'Errore sconosciuto',
-                          textAlign: TextAlign.center),
+                      Text(
+                        _errore ?? 'Errore sconosciuto',
+                        textAlign: TextAlign.center,
+                      ),
                       const SizedBox(height: 20),
-                      AdaptiveButton(
-                        etichetta: 'Riprova',
-                        icona: Icons.refresh,
-                        onPressed: _avviaFlusso,
+                      Wrap(
+                        spacing: 12,
+                        runSpacing: 8,
+                        alignment: WrapAlignment.center,
+                        children: [
+                          AdaptiveButton(
+                            etichetta: 'Scansiona',
+                            icona: Icons.camera_alt_outlined,
+                            onPressed: _avviaFlussoScanner,
+                          ),
+                          AdaptiveButton(
+                            etichetta: 'Importa PDF',
+                            icona: Icons.file_open_outlined,
+                            onPressed: _avviaFlussoImportPdf,
+                          ),
+                        ],
                       ),
                     ],
                   ),
                 ),
               ),
-              _StatoAndroid.anteprima => Consumer(
-                builder: (ctx, ref, _) => TabellaValoriEditor(
-                  key: ValueKey(Object.hashAll(_valoriEstratti)),
-                  valoriIniziali: _valoriEstratti,
-                  avviso: _valoriEstratti.isEmpty
-                      ? 'Gemini Nano non ha trovato valori — inseriscili manualmente'
-                      : 'Verifica i valori estratti prima di salvare',
-                  dataIniziale: _dataEsame,
-                  onSalva: (valori, data) async {
-                    final controller =
-                        ref.read(importControllerProvider.notifier);
-                    await controller.salva(valori, data);
-                    if (ctx.mounted) _reset();
-                  },
-                  onAnnulla: _reset,
+              _StatoAndroid.anteprima => TabellaValoriEditor(
+                key: ValueKey(
+                  'android-${_valoriEstratti.length}-${_dataEsame?.toIso8601String() ?? ''}',
                 ),
+                valoriIniziali: _valoriEstratti,
+                avviso: _valoriEstratti.isEmpty
+                    ? 'Nessun valore trovato — inseriscili manualmente'
+                    : 'Verifica i valori estratti prima di salvare',
+                dataIniziale: _dataEsame,
+                analisi: _analisi,
+                analisiInCorso: _analisiInCorso,
+                onSalva: (valori, data) async {
+                  final controller = ref.read(importControllerProvider.notifier);
+                  await controller.salva(valori, data);
+                  if (mounted) _reset();
+                },
+                onAnnulla: _reset,
               ),
             },
           ),
@@ -402,7 +548,11 @@ class _AndroidImportScreenState extends State<_AndroidImportScreen> {
   }
 }
 
-class _BannerFallback extends StatelessWidget {
+class _BannerLlmFallback extends StatelessWidget {
+  final VoidCallback onVaiImpostazioni;
+
+  const _BannerLlmFallback({required this.onVaiImpostazioni});
+
   @override
   Widget build(BuildContext context) {
     final schema = Theme.of(context).colorScheme;
@@ -416,7 +566,7 @@ class _BannerFallback extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Gemini Nano non disponibile su questo dispositivo — inserimento manuale',
+              'Gemma 2B non scaricato — usato OCR come fallback.',
               style: Theme.of(context).textTheme.bodySmall?.copyWith(
                 color: schema.onTertiaryContainer,
               ),
@@ -429,45 +579,125 @@ class _BannerFallback extends StatelessWidget {
 }
 
 class _InAttivaAndroid extends StatelessWidget {
-  final VoidCallback onAvvia;
-  final bool? aiCoreOk;
+  final VoidCallback onAvviaScanner;
+  final VoidCallback onImportaPdf;
+  final bool usaLlm;
+  final bool llmDisponibile;
+  final bool downloading;
+  final int downloadPct;
+  final String downloadLabel;
+  final VoidCallback onScaricaLlm;
 
-  const _InAttivaAndroid({required this.onAvvia, required this.aiCoreOk});
+  const _InAttivaAndroid({
+    required this.onAvviaScanner,
+    required this.onImportaPdf,
+    required this.usaLlm,
+    required this.llmDisponibile,
+    required this.downloading,
+    required this.downloadPct,
+    required this.downloadLabel,
+    required this.onScaricaLlm,
+  });
 
   @override
   Widget build(BuildContext context) {
     final schema = Theme.of(context).colorScheme;
-    final descrizione = aiCoreOk == false
-        ? 'Scansiona il referto con la fotocamera e inserisci i valori manualmente'
-        : 'Scansiona il referto con la fotocamera — Gemini Nano estrarrà i valori in automatico';
+    final String descrizione;
+    if (usaLlm && llmDisponibile) {
+      descrizione = 'Modalità LLM: Gemma 2B on-device analizza il referto';
+    } else {
+      descrizione = 'Modalità OCR: analisi testuale on-device senza LLM';
+    }
 
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(Icons.document_scanner_outlined, size: 72, color: schema.primary),
-            const SizedBox(height: 20),
-            Text(
-              'Scansiona un referto',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-              textAlign: TextAlign.center,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.document_scanner_outlined, size: 72, color: schema.primary),
+          const SizedBox(height: 20),
+          Text(
+            'Importa un referto',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w600,
             ),
-            const SizedBox(height: 8),
-            Text(descrizione,
-                textAlign: TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 32),
-            AdaptiveButton(
-              etichetta: 'Scansiona referto',
-              icona: Icons.camera_alt_outlined,
-              onPressed: onAvvia,
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            descrizione,
+            textAlign: TextAlign.center,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          const SizedBox(height: 32),
+          Wrap(
+            spacing: 12,
+            runSpacing: 12,
+            alignment: WrapAlignment.center,
+            children: [
+              AdaptiveButton(
+                etichetta: 'Scansiona referto',
+                icona: Icons.camera_alt_outlined,
+                onPressed: onAvviaScanner,
+              ),
+              AdaptiveButton(
+                etichetta: 'Importa PDF',
+                icona: Icons.file_open_outlined,
+                onPressed: onImportaPdf,
+              ),
+            ],
+          ),
+
+          // Card download Gemma inline (solo se LLM mode ma modello mancante)
+          if (usaLlm && !llmDisponibile) ...[
+            const SizedBox(height: 28),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                border: Border.all(
+                  color: schema.outline.withValues(alpha: 0.4),
+                ),
+                borderRadius: BorderRadius.circular(12),
+                color: schema.surfaceContainerLow,
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.psychology_outlined, color: schema.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Gemma 2B non scaricato',
+                        style: Theme.of(context).textTheme.titleSmall,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Scarica il modello (~1.5 GB) per usare LLM on-device. '
+                    'Puoi anche usare OCR senza scaricarlo.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  if (downloading) ...[
+                    LinearProgressIndicator(value: downloadPct / 100),
+                    const SizedBox(height: 6),
+                    Text(
+                      '$downloadPct%  $downloadLabel',
+                      style: Theme.of(context).textTheme.bodySmall,
+                    ),
+                  ] else
+                    FilledButton.icon(
+                      onPressed: onScaricaLlm,
+                      icon: const Icon(Icons.download_outlined),
+                      label: const Text('Scarica Gemma 2B (~1.5 GB)'),
+                    ),
+                ],
+              ),
             ),
           ],
-        ),
+        ],
       ),
     );
   }

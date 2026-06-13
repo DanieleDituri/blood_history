@@ -8,6 +8,7 @@ import '../repositories/esame_repository.dart';
 import '../repositories/vision_repository.dart';
 import '../services/auth/drive_auth_service.dart';
 import '../services/pdf/pdf_rasterizzatore.dart';
+import '../services/pdf/pdf_testo_estrattore.dart';
 import '../services/vision/lm_studio_client.dart';
 import '../services/vision/ollama_client.dart';
 import '../services/vision/vision_client.dart';
@@ -91,3 +92,23 @@ final visionRepositoryProvider = FutureProvider<VisionRepository>((ref) async {
 final pdfRasterizzatoreProvider = Provider<PdfRasterizzatore>(
   (ref) => PdfrxRasterizzatore(),
 );
+
+final pdfTestoEstrattoreProvider = Provider<PdfTestoEstrattore>(
+  (ref) => PdfTestoEstrattore(),
+);
+
+// ---- Android: modalità estrazione -------------------------------------------
+
+/// 'ocr' | 'llm' | null (null = non ancora scelto)
+final modalitaAndroidProvider = FutureProvider<String?>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString(Costanti.prefModalitaAndroid);
+});
+
+// ---- Desktop: modalità estrazione -------------------------------------------
+
+/// 'vision' (default) | 'ocr'
+final modalitaDesktopProvider = FutureProvider<String>((ref) async {
+  final prefs = await SharedPreferences.getInstance();
+  return prefs.getString(Costanti.prefModalitaDesktop) ?? 'vision';
+});

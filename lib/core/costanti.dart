@@ -18,6 +18,21 @@ class Costanti {
   static const prefCredenzialiDrive = 'drive_credentials';
   static const prefOnboardingCompletato = 'onboarding_completato';
 
+  // Android: modalità estrazione ('ocr' | 'llm' | null = non scelto)
+  static const prefModalitaAndroid = 'android_modalita';
+  static const prefHuggingFaceToken = 'hf_token';
+
+  // Desktop (macOS/Windows/Linux): modalità estrazione
+  // 'vision' = rasterizza PDF → modello vision (default)
+  // 'ocr'    = estrae testo dal PDF → LLM testuale (nessun vision model necessario)
+  static const prefModalitaDesktop = 'desktop_modalita';
+
+  // MediaPipe Gemma 2B — modello consigliato per referti su dispositivo
+  static const llmNomeFile = 'gemma-2b-it-cpu-int4.bin';
+  static const llmUrlHuggingFace =
+      'https://huggingface.co/google/gemma-2b-it-mediapipe'
+      '/resolve/main/gemma-2b-it-cpu-int4.bin';
+
   // Modello vision locale.
   static const prefTipoModello = 'tipo_modello'; // 'lmstudio' | 'ollama'
   static const endpointLmStudio = 'http://localhost:1234/v1';
