@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io' show Platform;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -5,6 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/costanti.dart';
 import '../../providers/providers.dart';
+import '../../repositories/drive_repository.dart';
+import '../../services/android/android_import_service.dart';
 import '../../ui/platform/adaptive_scaffold.dart';
 
 class ImpostazioniScreen extends ConsumerStatefulWidget {
@@ -81,43 +86,54 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          _sezione('Modello Vision Locale'),
-          _TipoModelloSelector(
-            valore: _tipo,
-            onCambia: (v) => setState(() => _tipo = v),
-          ),
-          const SizedBox(height: 16),
-          _EndpointRow(
-            label: 'Endpoint LM Studio',
-            controller: _endpointLm,
-            attivo: _tipo == 'lmstudio',
-            urlTest: '${_endpointLm.text}/models',
-          ),
-          const SizedBox(height: 12),
-          _EndpointRow(
-            label: 'Endpoint Ollama',
-            controller: _endpointOllama,
-            attivo: _tipo == 'ollama',
-            urlTest: '${_endpointOllama.text}/tags',
-          ),
-          const SizedBox(height: 12),
-          TextFormField(
-            controller: _modello,
-            decoration: const InputDecoration(
-              labelText: 'Nome modello',
-              hintText: 'es. qwen/qwen3-vl-8b',
-              border: OutlineInputBorder(),
+          if (Platform.isAndroid) ...[
+            _sezione('Estrazione su Android'),
+            const _SezioneAndroidLlm(),
+            const SizedBox(height: 24),
+          ] else ...[
+            _sezione('Modello Vision Locale'),
+            _TipoModelloSelector(
+              valore: _tipo,
+              onCambia: (v) => setState(() => _tipo = v),
             ),
-          ),
-          const SizedBox(height: 24),
+            const SizedBox(height: 16),
+            const _ModalitaDesktopSelector(),
+            const SizedBox(height: 16),
+            _EndpointRow(
+              label: 'Endpoint LM Studio',
+              controller: _endpointLm,
+              attivo: _tipo == 'lmstudio',
+              urlTest: '${_endpointLm.text}/models',
+            ),
+            const SizedBox(height: 12),
+            _EndpointRow(
+              label: 'Endpoint Ollama',
+              controller: _endpointOllama,
+              attivo: _tipo == 'ollama',
+              urlTest: '${_endpointOllama.text}/tags',
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _modello,
+              decoration: const InputDecoration(
+                labelText: 'Nome modello',
+                hintText: 'es. qwen/qwen3-vl-8b',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            const SizedBox(height: 24),
+            FilledButton.icon(
+              onPressed: _salva,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text('Salva impostazioni'),
+            ),
+            const SizedBox(height: 24),
+          ],
           _sezione('Google Drive'),
-          _DriveSection(),
+          const _DriveSection(),
+          const SizedBox(height: 16),
+          const _EsportaCsvButton(),
           const SizedBox(height: 32),
-          FilledButton.icon(
-            onPressed: _salva,
-            icon: const Icon(Icons.save_outlined),
-            label: const Text('Salva impostazioni'),
-          ),
         ],
       ),
     );
@@ -132,6 +148,289 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
       ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
     ),
   );
+}
+
+// ---- Sezione Android: OCR / LLM download ------------------------------------
+
+class _SezioneAndroidLlm extends StatefulWidget {
+  const _SezioneAndroidLlm();
+
+  @override
+  State<_SezioneAndroidLlm> createState() => _SezioneAndroidLlmState();
+}
+
+class _SezioneAndroidLlmState extends State<_SezioneAndroidLlm> {
+  String _modalita = 'ocr';
+  bool _llmDisponibile = false;
+  bool _downloading = false;
+  int _percentuale = 0;
+  String _etichetta = '';
+  StreamSubscription<ProgressoDownload>? _sub;
+  final _tokenCtrl = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    _carica();
+  }
+
+  Future<void> _carica() async {
+    final prefs = await SharedPreferences.getInstance();
+    final llmOk = await AndroidImportService.isLlmDisponibile();
+    if (mounted) {
+      setState(() {
+        _modalita = prefs.getString(Costanti.prefModalitaAndroid) ?? 'ocr';
+        _tokenCtrl.text = prefs.getString(Costanti.prefHuggingFaceToken) ?? '';
+        _llmDisponibile = llmOk;
+      });
+    }
+  }
+
+  Future<void> _cambiaModalita(String nuova) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(Costanti.prefModalitaAndroid, nuova);
+    if (mounted) setState(() => _modalita = nuova);
+  }
+
+  Future<void> _salvaToken() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(Costanti.prefHuggingFaceToken, _tokenCtrl.text.trim());
+  }
+
+  Future<void> _avviaDownload() async {
+    await _salvaToken();
+    setState(() {
+      _downloading = true;
+      _percentuale = 0;
+      _etichetta = '';
+    });
+
+    _sub = AndroidImportService.progressoDownload.listen(
+      (p) {
+        if (mounted) {
+          setState(() {
+            _percentuale = p.percentuale;
+            _etichetta = p.etichetta;
+          });
+        }
+      },
+      onError: (_) {
+        if (mounted) setState(() => _downloading = false);
+      },
+    );
+
+    try {
+      await AndroidImportService.scaricaModello(token: _tokenCtrl.text.trim());
+      if (mounted) {
+        setState(() {
+          _llmDisponibile = true;
+          _downloading = false;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Modello Gemma 2B scaricato')),
+        );
+      }
+    } on AndroidImportException catch (e) {
+      if (mounted) {
+        setState(() => _downloading = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Errore download: ${e.messaggio}')),
+        );
+      }
+    } finally {
+      await _sub?.cancel();
+      _sub = null;
+    }
+  }
+
+  Future<void> _cancellaModello() async {
+    final conferma = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Elimina Gemma 2B?'),
+        content: const Text('Il modello (~1.5 GB) verrà rimosso dal dispositivo.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annulla'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Elimina'),
+          ),
+        ],
+      ),
+    );
+    if (conferma != true) return;
+    await AndroidImportService.cancellaModello();
+    if (mounted) {
+      setState(() => _llmDisponibile = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Modello eliminato')),
+      );
+    }
+  }
+
+  @override
+  void dispose() {
+    _sub?.cancel();
+    _tokenCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final schema = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Modalità corrente
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(
+              value: 'ocr',
+              icon: Icon(Icons.text_fields_outlined),
+              label: Text('Solo OCR'),
+            ),
+            ButtonSegment(
+              value: 'llm',
+              icon: Icon(Icons.psychology_outlined),
+              label: Text('LLM Gemma 2B'),
+            ),
+          ],
+          selected: {_modalita},
+          onSelectionChanged: (s) => _cambiaModalita(s.first),
+        ),
+        const SizedBox(height: 16),
+
+        // Stato modello / download
+        if (_modalita == 'llm') ...[
+          if (_llmDisponibile) ...[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.check_circle_outline, color: Colors.green[700]),
+              title: const Text('Gemma 2B installato'),
+              subtitle: const Text('~1.5 GB · estrazione LLM attiva'),
+              trailing: OutlinedButton.icon(
+                onPressed: _cancellaModello,
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Elimina'),
+              ),
+            ),
+          ] else ...[
+            ListTile(
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.download_outlined, color: schema.primary),
+              title: const Text('Gemma 2B non scaricato'),
+              subtitle: const Text('~1.5 GB — richiede accettazione licenza su hf.co'),
+            ),
+            const SizedBox(height: 8),
+            TextFormField(
+              controller: _tokenCtrl,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Token HuggingFace (opzionale)',
+                hintText: 'hf_xxxxxxxxxxxx',
+                border: OutlineInputBorder(),
+                helperText: 'Necessario se hai accettato la licenza Gemma su hf.co',
+              ),
+            ),
+            const SizedBox(height: 12),
+            if (_downloading) ...[
+              LinearProgressIndicator(value: _percentuale / 100),
+              const SizedBox(height: 4),
+              Text(
+                '$_percentuale%  $_etichetta',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ] else
+              FilledButton.icon(
+                onPressed: _avviaDownload,
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Scarica modello (~1.5 GB)'),
+              ),
+          ],
+        ],
+      ],
+    );
+  }
+}
+
+// ---- Selettore modalità estrazione desktop ---------------------------------
+
+class _ModalitaDesktopSelector extends StatefulWidget {
+  const _ModalitaDesktopSelector();
+
+  @override
+  State<_ModalitaDesktopSelector> createState() =>
+      _ModalitaDesktopSelectorState();
+}
+
+class _ModalitaDesktopSelectorState extends State<_ModalitaDesktopSelector> {
+  String _modalita = 'vision';
+  bool _caricato = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _carica();
+  }
+
+  Future<void> _carica() async {
+    final prefs = await SharedPreferences.getInstance();
+    if (mounted) {
+      setState(() {
+        _modalita =
+            prefs.getString(Costanti.prefModalitaDesktop) ?? 'vision';
+        _caricato = true;
+      });
+    }
+  }
+
+  Future<void> _cambia(String nuova) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(Costanti.prefModalitaDesktop, nuova);
+    if (mounted) setState(() => _modalita = nuova);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_caricato) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Modalità estrazione',
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+        const SizedBox(height: 8),
+        SegmentedButton<String>(
+          segments: const [
+            ButtonSegment(
+              value: 'vision',
+              icon: Icon(Icons.image_outlined),
+              label: Text('Vision'),
+            ),
+            ButtonSegment(
+              value: 'ocr',
+              icon: Icon(Icons.text_fields_outlined),
+              label: Text('OCR testo'),
+            ),
+          ],
+          selected: {_modalita},
+          onSelectionChanged: (s) => _cambia(s.first),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          _modalita == 'ocr'
+              ? 'OCR: estrae e analizza il testo del PDF — nessun LLM, più rapido ma meno accurato'
+              : 'Vision: rasterizza il PDF e lo invia al modello multimodale — funziona anche su referti scansionati',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+      ],
+    );
+  }
 }
 
 // ---- Selezione tipo modello -------------------------------------------------
@@ -288,10 +587,7 @@ class _DriveSection extends ConsumerWidget {
         '${dt.minute.toString().padLeft(2, '0')}';
   }
 
-  static Future<void> _disconnetti(
-    BuildContext context,
-    WidgetRef ref,
-  ) async {
+  static Future<void> _disconnetti(BuildContext context, WidgetRef ref) async {
     final conferma = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -315,5 +611,67 @@ class _DriveSection extends ConsumerWidget {
     if (conferma == true) {
       await ref.read(authServiceProvider).scollega();
     }
+  }
+}
+
+// ---- Esporta CSV -----------------------------------------------------------
+
+class _EsportaCsvButton extends ConsumerStatefulWidget {
+  const _EsportaCsvButton();
+
+  @override
+  ConsumerState<_EsportaCsvButton> createState() => _EsportaCsvButtonState();
+}
+
+class _EsportaCsvButtonState extends ConsumerState<_EsportaCsvButton> {
+  bool _inCorso = false;
+
+  Future<void> _esporta() async {
+    setState(() => _inCorso = true);
+    try {
+      final esami = await ref.read(esameRepositoryProvider).esami();
+      if (esami.isEmpty) {
+        _mostraSnackbar('Nessun esame da esportare');
+        return;
+      }
+      await ref.read(driveRepositoryProvider).esportaCsv(esami);
+      _mostraSnackbar(
+        'CSV esportato in Google Drive › Esami del Sangue/export/',
+        errore: false,
+      );
+    } on DriveRepositoryException catch (e) {
+      _mostraSnackbar('Errore Drive: ${e.messaggio}', errore: true);
+    } catch (e) {
+      _mostraSnackbar('Errore export: $e', errore: true);
+    } finally {
+      if (mounted) setState(() => _inCorso = false);
+    }
+  }
+
+  void _mostraSnackbar(String testo, {bool errore = false}) {
+    if (!mounted) return;
+    final schema = Theme.of(context).colorScheme;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(testo),
+        backgroundColor: errore ? schema.error : null,
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: _inCorso ? null : _esporta,
+      icon: _inCorso
+          ? const SizedBox(
+              width: 16,
+              height: 16,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.download_outlined),
+      label: const Text('Esporta tutti i dati come CSV'),
+    );
   }
 }

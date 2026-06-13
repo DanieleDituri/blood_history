@@ -8,6 +8,7 @@ class Costanti {
   static const cartellaDrive = 'Esami del Sangue';
   static const sottocartellaPdf = 'pdf';
   static const sottocartellaData = 'data';
+  static const sottocartellaExport = 'export';
 
   // Chiavi shared_preferences.
   static const prefEndpointModello = 'endpoint_modello';
@@ -16,6 +17,21 @@ class Costanti {
   static const prefDriveClientSecret = 'drive_client_secret';
   static const prefCredenzialiDrive = 'drive_credentials';
   static const prefOnboardingCompletato = 'onboarding_completato';
+
+  // Android: modalità estrazione ('ocr' | 'llm' | null = non scelto)
+  static const prefModalitaAndroid = 'android_modalita';
+  static const prefHuggingFaceToken = 'hf_token';
+
+  // Desktop (macOS/Windows/Linux): modalità estrazione
+  // 'vision' = rasterizza PDF → modello vision (default)
+  // 'ocr'    = estrae testo dal PDF → LLM testuale (nessun vision model necessario)
+  static const prefModalitaDesktop = 'desktop_modalita';
+
+  // MediaPipe Gemma 2B — modello consigliato per referti su dispositivo
+  static const llmNomeFile = 'gemma-2b-it-cpu-int4.bin';
+  static const llmUrlHuggingFace =
+      'https://huggingface.co/google/gemma-2b-it-mediapipe'
+      '/resolve/main/gemma-2b-it-cpu-int4.bin';
 
   // Modello vision locale.
   static const prefTipoModello = 'tipo_modello'; // 'lmstudio' | 'ollama'

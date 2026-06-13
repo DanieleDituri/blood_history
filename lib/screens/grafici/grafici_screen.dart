@@ -47,22 +47,41 @@ class _ListaGrafici extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ListView.separated(
+    // ListView.builder è lazy: costruisce solo le card visibili a schermo.
+    // Le card usano AutomaticKeepAlive per mantenere il grafico in memoria
+    // quando scorrono fuori dalla viewport (evita rebuilds costosi).
+    return ListView.builder(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      itemCount: serie.length,
-      separatorBuilder: (_, __) => const SizedBox(height: 12),
-      itemBuilder: (context, i) => _CardGrafico(serie: serie[i]),
+      itemCount: serie.length * 2 - 1,
+      itemBuilder: (context, i) {
+        if (i.isOdd) return const SizedBox(height: 12);
+        return _CardGrafico(serie: serie[i ~/ 2]);
+      },
     );
   }
 }
 
-class _CardGrafico extends StatelessWidget {
+/// Card con grafico. Usa [AutomaticKeepAliveClientMixin] per conservare
+/// in memoria il grafico anche quando la card scorre fuori dalla viewport:
+/// evita di ricostruire LineChart ogni volta che l'utente scorre avanti e
+/// indietro.
+class _CardGrafico extends StatefulWidget {
   final SerieParametro serie;
 
   const _CardGrafico({required this.serie});
 
   @override
+  State<_CardGrafico> createState() => _CardGraficoState();
+}
+
+class _CardGraficoState extends State<_CardGrafico>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
   Widget build(BuildContext context) {
+    super.build(context); // richiesto da AutomaticKeepAliveClientMixin
     final schema = Theme.of(context).colorScheme;
     return Card(
       elevation: 0,
@@ -70,7 +89,7 @@ class _CardGrafico extends StatelessWidget {
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => GraficoFullscreen.apri(context, serie),
+        onTap: () => GraficoFullscreen.apri(context, widget.serie),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
           child: Column(
@@ -78,20 +97,16 @@ class _CardGrafico extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Expanded(child: HeaderGrafico(serie: serie)),
-                  Icon(
-                    Icons.open_in_full,
-                    size: 16,
-                    color: schema.outline,
-                  ),
+                  Expanded(child: HeaderGrafico(serie: widget.serie)),
+                  Icon(Icons.open_in_full, size: 16, color: schema.outline),
                 ],
               ),
               const SizedBox(height: 12),
               SizedBox(
                 height: 140,
                 child: GraficoParametroCard(
-                  serie: serie,
-                  onTap: () => GraficoFullscreen.apri(context, serie),
+                  serie: widget.serie,
+                  onTap: () => GraficoFullscreen.apri(context, widget.serie),
                 ),
               ),
             ],

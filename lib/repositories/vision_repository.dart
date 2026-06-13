@@ -22,11 +22,14 @@ class EstrazioneNonValidaException implements Exception {
 ///
 /// [data] è la data del prelievo letta dal referto (null se il modello
 /// non l'ha trovata o non era leggibile).
+/// [analisi] è il commento in linguaggio naturale generato dal LLM dopo
+/// l'estrazione (null se non disponibile o se la chiamata è fallita).
 class RisultatoEstrazione {
   final List<ValoreEsame> valori;
   final DateTime? data;
+  final String? analisi;
 
-  const RisultatoEstrazione({required this.valori, this.data});
+  const RisultatoEstrazione({required this.valori, this.data, this.analisi});
 }
 
 /// Estrazione dei valori da un referto tramite modello vision locale.
@@ -46,6 +49,24 @@ class VisionRepository {
       '"valore": 0.0, "unita": "...", "range_min": 0.0, "range_max": 0.0}]}. '
       'Se la data non è leggibile ometti il campo "data". '
       'Restituisci SOLO il JSON, nessun testo aggiuntivo.';
+
+  /// Prompt per l'estrazione da testo grezzo del PDF (modalità OCR desktop).
+  static const promptEstrazioneTesto =
+      'Sei un assistente medico. Leggi il seguente testo di un referto del '
+      'sangue ed estrai la data del prelievo e tutti i valori in formato JSON. '
+      'Formato: {"data": "YYYY-MM-DD", "valori": [{"nome": "...", '
+      '"valore": 0.0, "unita": "...", "range_min": 0.0, "range_max": 0.0}]}. '
+      'Se la data non è leggibile ometti il campo "data". '
+      'Restituisci SOLO il JSON, nessun testo aggiuntivo.\n\nTesto del referto:\n';
+
+  /// Prompt per l'analisi in linguaggio naturale dei valori estratti.
+  static const _promptAnalisi =
+      'Sei un assistente medico. Analizza questi valori di un esame del sangue '
+      'e fornisci un commento breve in italiano (3-5 frasi), parlando '
+      'direttamente al paziente. Spiega i risultati in linguaggio semplice, '
+      'segnala eventuali valori fuori range o da tenere d\'occhio, e concludi '
+      'con un consiglio generale. Non fare diagnosi, ma orienta il paziente.\n\n'
+      'Valori:\n';
 
   static const _maxPagineInsieme = 2;
   static const _temperaturaPrimoTentativo = 0.2;
@@ -85,6 +106,57 @@ class VisionRepository {
       }
     }
     return RisultatoEstrazione(valori: valori, data: dataEstratta);
+  }
+
+  /// Estrae valori e data da testo grezzo del PDF (modalità OCR desktop).
+  ///
+  /// Invia il testo come prompt testuale al LLM (senza immagini), quindi
+  /// usa lo stesso parser JSON di [estraiValori].
+  Future<RisultatoEstrazione> estraiDaTesto(String testoPdf) async {
+    final prompt = '$promptEstrazioneTesto$testoPdf';
+    final risposta = await _client.generaTesto(
+      prompt: prompt,
+      immaginiPng: const [],
+      temperatura: _temperaturaPrimoTentativo,
+    );
+    try {
+      return parseRisposta(risposta);
+    } on FormatException {
+      final risposta2 = await _client.generaTesto(
+        prompt: prompt,
+        immaginiPng: const [],
+        temperatura: 0,
+      );
+      try {
+        return parseRisposta(risposta2);
+      } on FormatException {
+        throw EstrazioneNonValidaException(risposta2);
+      }
+    }
+  }
+
+  /// Genera un'analisi in linguaggio naturale dei [valori] estratti.
+  ///
+  /// Restituisce null in caso di errore (la feature è non bloccante).
+  Future<String?> analisiValori(List<ValoreEsame> valori) async {
+    if (valori.isEmpty) return null;
+    final elenco = valori.map((v) {
+      final range =
+          (v.range.min != null && v.range.max != null)
+              ? ' (range: ${v.range.min}-${v.range.max} ${v.unita})'
+              : '';
+      return '- ${v.nome}: ${v.valore} ${v.unita}$range';
+    }).join('\n');
+    final prompt = '$_promptAnalisi$elenco';
+    try {
+      return await _client.generaTesto(
+        prompt: prompt,
+        immaginiPng: const [],
+        temperatura: 0.4,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<RisultatoEstrazione> _estraiConRetry(

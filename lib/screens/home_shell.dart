@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 
 import '../ui/platform/adaptive_navigation.dart';
+import '../ui/platform/adaptive_platform.dart';
+import '../ui/platform/macos_menu_bar.dart';
 import 'grafici/grafici_screen.dart';
 import 'impostazioni/impostazioni_screen.dart';
 import 'import/import_screen.dart';
@@ -56,11 +58,20 @@ class _HomeShellState extends State<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    return AdaptiveNavigation(
+    final nav = AdaptiveNavigation(
       indiceSelezionato: _indice,
       onDestinazioneSelezionata: (i) => setState(() => _indice = i),
       destinazioni: _destinazioni,
       schermate: _schermate,
     );
+
+    if (AdaptivePlatform.corrente == PiattaformaApp.macos) {
+      return MacosMenuBar(
+        onNuovoImport: () => setState(() => _indice = 2),
+        onNavigaImpostazioni: () => setState(() => _indice = 3),
+        child: nav,
+      );
+    }
+    return nav;
   }
 }

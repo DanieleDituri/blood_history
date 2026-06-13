@@ -1,4 +1,11 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- ML Kit Document Scanner richiede la fotocamera -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- Lettura galleria (API 33+) -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <!-- Rete per sync Google Drive -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
     <application
         android:label="esami_tracker"
         android:name="${applicationName}"

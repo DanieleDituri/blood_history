@@ -176,7 +176,8 @@ void main() {
         ),
       );
       expect(find.byType(GlassContainer), findsOneWidget); // pillola bottone
-      expect(find.byType(GlassIconButton), findsOneWidget);
+      // Icon button ora usa _MacosIconButton (borderless native-style)
+      expect(find.byIcon(Icons.refresh), findsOneWidget);
       expect(find.byType(FilledButton), findsNothing);
     });
 

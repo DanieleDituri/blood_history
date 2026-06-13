@@ -2,14 +2,19 @@ import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/costanti.dart';
 import '../../models/esame.dart';
 import '../../models/valore_esame.dart';
 import '../../providers/providers.dart';
 import '../../repositories/vision_repository.dart';
 import '../../services/auth/drive_auth_service.dart';
+import '../../services/pdf/ocr_parser.dart';
 import '../../services/pdf/pdf_rasterizzatore.dart';
+import '../../services/pdf/pdf_testo_estrattore.dart';
 import '../../services/vision/vision_client.dart';
+import '../../ui/platform/adaptive_platform.dart';
 
 /// Stati della schermata Import.
 sealed class StatoImport {
@@ -40,7 +45,20 @@ class ImportAnteprima extends StatoImport {
   /// Data del prelievo letta dal referto (null → editor usa oggi).
   final DateTime? dataEsame;
 
-  const ImportAnteprima({required this.valori, this.avviso, this.dataEsame});
+  /// Commento in linguaggio naturale generato dal LLM dopo l'estrazione.
+  /// Null se l'analisi non è ancora disponibile o è fallita.
+  final String? analisi;
+
+  /// True mentre l'analisi è in corso in background.
+  final bool analisiInCorso;
+
+  const ImportAnteprima({
+    required this.valori,
+    this.avviso,
+    this.dataEsame,
+    this.analisi,
+    this.analisiInCorso = false,
+  });
 }
 
 /// Estrazione fallita prima dell'anteprima.
@@ -116,30 +134,64 @@ class ImportController extends StateNotifier<StatoImport> {
   Future<void> _estrai(Uint8List pdf) async {
     state = const ImportInCorso('Lettura del PDF…');
     try {
-      final rasterizzatore = _ref.read(pdfRasterizzatoreProvider);
-      final pagine = await rasterizzatore.renderizzaPagine(
-        pdf,
-        onProgresso: (pagina, totale) =>
-            state = ImportInCorso('Preparazione pagina $pagina di $totale…'),
-      );
+      // Legge la modalità direttamente da SharedPreferences: i FutureProvider
+      // vengono cachati da Riverpod e non si aggiornano automaticamente quando
+      // l'utente salva una nuova impostazione senza invalidare il provider.
+      String modalita = 'vision';
+      if (AdaptivePlatform.corrente != PiattaformaApp.android) {
+        final prefs = await SharedPreferences.getInstance();
+        modalita = prefs.getString(Costanti.prefModalitaDesktop) ?? 'vision';
+      }
 
-      final vision = await _ref.read(visionRepositoryProvider.future);
-      final risultato = await vision.estraiValori(
-        pagine,
-        onProgresso: (pagina, totale) => state = ImportInCorso(
-          totale == 1
-              ? 'Analisi del referto…'
-              : 'Analizzando pagina $pagina di $totale…',
-        ),
-      );
+      RisultatoEstrazione risultato;
+      VisionRepository? vision;
 
+      if (modalita == 'ocr') {
+        // Modalità full-OCR: zero chiamate LLM.
+        state = const ImportInCorso('Estrazione testo dal PDF…');
+        final estrattore = _ref.read(pdfTestoEstrattoreProvider);
+        final testo = await estrattore.estraiTesto(pdf);
+        state = const ImportInCorso('Analisi struttura del referto…');
+        risultato = OcrParser.parseTesto(testo);
+      } else {
+        final v = await _ref.read(visionRepositoryProvider.future);
+        vision = v;
+        final rasterizzatore = _ref.read(pdfRasterizzatoreProvider);
+        final pagine = await rasterizzatore.renderizzaPagine(
+          pdf,
+          onProgresso: (pagina, totale) =>
+              state = ImportInCorso('Preparazione pagina $pagina di $totale…'),
+        );
+        risultato = await v.estraiValori(
+          pagine,
+          onProgresso: (pagina, totale) => state = ImportInCorso(
+            totale == 1
+                ? 'Analisi del referto…'
+                : 'Analizzando pagina $pagina di $totale…',
+          ),
+        );
+      }
+
+      // In modalità OCR non si lancia il commento AI (nessun LLM coinvolto).
+      final avviaAnalisi = vision != null && risultato.valori.isNotEmpty;
+
+      // Mostra subito i dati estratti; l'analisi (solo vision) parte in background.
       state = ImportAnteprima(
         valori: risultato.valori,
         dataEsame: risultato.data,
+        analisiInCorso: avviaAnalisi,
         avviso: risultato.valori.isEmpty
-            ? 'Il modello non ha trovato valori: aggiungili manualmente'
+            ? (modalita == 'ocr'
+                ? 'Nessun valore trovato nel testo: il PDF potrebbe essere una scansione — prova la modalità Vision'
+                : 'Il modello non ha trovato valori: aggiungili manualmente')
             : 'Controlla i valori estratti prima di salvare',
       );
+
+      if (avviaAnalisi) {
+        _avviaAnalisiBackground(vision, risultato.valori);
+      }
+    } on PdfTestoEstrattoreException catch (e) {
+      state = ImportErrore(e.messaggio, puoInserireManualmente: true);
     } on PdfRasterException catch (e) {
       state = ImportErrore(e.messaggio);
     } on VisionClientException catch (e) {
@@ -154,6 +206,30 @@ class ImportController extends StateNotifier<StatoImport> {
       state = ImportErrore(
         'Errore inatteso durante l\'estrazione: $e',
         puoInserireManualmente: true,
+      );
+    }
+  }
+
+  /// Chiama [VisionRepository.analisiValori] in background e aggiorna
+  /// lo stato quando l'analisi è pronta, senza bloccare la UI.
+  void _avviaAnalisiBackground(
+    VisionRepository vision,
+    List<ValoreEsame> valori,
+  ) async {
+    String? analisi;
+    try {
+      analisi = await vision.analisiValori(valori);
+    } catch (_) {
+      // Fallisce silenziosamente: l'analisi è opzionale.
+    }
+    if (state is ImportAnteprima) {
+      final s = state as ImportAnteprima;
+      state = ImportAnteprima(
+        valori: s.valori,
+        dataEsame: s.dataEsame,
+        avviso: s.avviso,
+        analisi: analisi,
+        analisiInCorso: false,
       );
     }
   }
