@@ -2,6 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io' show Platform;
 
+import 'package:url_launcher/url_launcher.dart';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:http/http.dart' as http;
@@ -421,21 +423,58 @@ class _SezioneAndroidLlmState extends State<_SezioneAndroidLlm> {
               ),
             ),
           ] else ...[
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.download_outlined, color: schema.primary),
-              title: const Text('Gemma 2B non scaricato'),
-              subtitle: const Text('~1.5 GB — richiede accettazione licenza su hf.co'),
+            // Istruzioni licenza
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: schema.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.info_outline, size: 16, color: schema.primary),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Licenza richiesta',
+                        style: TextStyle(
+                          fontWeight: FontWeight.w600,
+                          color: schema.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    '1. Crea un account su HuggingFace\n'
+                    '2. Apri la pagina Gemma e accetta la licenza Google\n'
+                    '3. Vai nelle impostazioni account → Access Tokens → crea token "Read"\n'
+                    '4. Incollalo qui sotto e scarica',
+                    style: TextStyle(fontSize: 13, height: 1.5),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () => launchUrl(
+                      Uri.parse('https://huggingface.co/google/gemma-2b-it-mediapipe'),
+                      mode: LaunchMode.externalApplication,
+                    ),
+                    icon: const Icon(Icons.open_in_browser, size: 18),
+                    label: const Text('Apri pagina Gemma su HuggingFace'),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 12),
             TextFormField(
               controller: _tokenCtrl,
               obscureText: true,
+              onChanged: (_) => setState(() {}),
               decoration: const InputDecoration(
-                labelText: 'Token HuggingFace (opzionale)',
+                labelText: 'Token HuggingFace',
                 hintText: 'hf_xxxxxxxxxxxx',
                 border: OutlineInputBorder(),
-                helperText: 'Necessario se hai accettato la licenza Gemma su hf.co',
               ),
             ),
             const SizedBox(height: 12),
@@ -448,7 +487,9 @@ class _SezioneAndroidLlmState extends State<_SezioneAndroidLlm> {
               ),
             ] else
               FilledButton.icon(
-                onPressed: _avviaDownload,
+                onPressed: _tokenCtrl.text.trim().isNotEmpty
+                    ? _avviaDownload
+                    : null,
                 icon: const Icon(Icons.download_outlined),
                 label: const Text('Scarica modello (~1.5 GB)'),
               ),
