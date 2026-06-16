@@ -27,6 +27,7 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
   List<String> _modelli = [];
   bool _caricandoModelli = false;
   bool _caricato = false;
+  bool? _endpointOk; // null = non testato, true = ok, false = errore
 
   @override
   void initState() {
@@ -64,12 +65,16 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
       _endpoint.text = defaultEndpoint;
       _modelli = [];
       _modelloSelezionato = null;
+      _endpointOk = null;
     });
     await _caricaModelli();
   }
 
   Future<void> _caricaModelli() async {
-    setState(() => _caricandoModelli = true);
+    setState(() {
+      _caricandoModelli = true;
+      _endpointOk = null;
+    });
     try {
       final url = _tipo == 'ollama'
           ? '${_endpoint.text}/api/tags'
@@ -82,30 +87,27 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
         List<String> nomi;
         if (_tipo == 'ollama') {
           final lista = json['models'] as List? ?? [];
-          nomi = lista
-              .map((m) => (m as Map)['name'] as String)
-              .toList();
+          nomi = lista.map((m) => (m as Map)['name'] as String).toList();
         } else {
           final lista = json['data'] as List? ?? [];
-          nomi = lista
-              .map((m) => (m as Map)['id'] as String)
-              .toList();
+          nomi = lista.map((m) => (m as Map)['id'] as String).toList();
         }
         nomi.sort();
         if (mounted) {
           setState(() {
+            _endpointOk = true;
             _modelli = nomi;
             if (_modelloSelezionato != null &&
                 !nomi.contains(_modelloSelezionato)) {
-              // Il modello salvato non è nella lista: lo teniamo comunque
-              // come selezione ma lo aggiungiamo in cima per mostrarlo.
               _modelli = [_modelloSelezionato!, ...nomi];
             }
           });
         }
+      } else {
+        if (mounted) setState(() => _endpointOk = false);
       }
     } catch (_) {
-      // Endpoint non raggiungibile: lista rimane vuota, si può digitare.
+      if (mounted) setState(() => _endpointOk = false);
     } finally {
       if (mounted) setState(() => _caricandoModelli = false);
     }
@@ -170,6 +172,14 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
                           ? 'Endpoint Ollama'
                           : 'Endpoint LM Studio',
                       border: const OutlineInputBorder(),
+                      suffixIcon: _endpointOk == null
+                          ? null
+                          : Icon(
+                              _endpointOk!
+                                  ? Icons.check_circle_outline
+                                  : Icons.error_outline,
+                              color: _endpointOk! ? Colors.green : Theme.of(context).colorScheme.error,
+                            ),
                     ),
                     onEditingComplete: _caricaModelli,
                   ),
