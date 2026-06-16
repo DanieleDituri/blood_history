@@ -211,11 +211,17 @@ class ImportController extends StateNotifier<StatoImport> {
     await repo.salvaEsame(esame);
     _ref.invalidate(snapshotProvider);
 
-    // Backup automatico (non bloccante).
+    // Salva sempre il PDF nella cache interna dell'app (se disponibile).
+    final pdf = _pdfCorrente;
+    if (pdf != null) {
+      await BackupService.salvaPdfInterno(esame.dataIso, pdf);
+    }
+
+    // Backup automatico nella cartella utente (non bloccante).
     try {
       final cartella = await BackupService.cartellaBackup();
       if (cartella != null) {
-        await BackupService.esportaEsame(esame, pdf: _pdfCorrente);
+        await BackupService.esportaEsame(esame, pdf: pdf);
         state = ImportSalvato(dataIso: esame.dataIso, backupOk: true);
       } else {
         state = ImportSalvato(dataIso: esame.dataIso);
