@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:path/path.dart' as p;
@@ -15,11 +16,17 @@ class BackupException implements Exception {
   String toString() => messaggio;
 }
 
-/// Gestisce il backup/ripristino degli esami su una cartella locale scelta
-/// dall'utente. I file sono salvati come JSON in `<cartella>/esami/YYYY-MM-DD.json`.
+/// Struttura cartella di backup:
+///
+/// ```
+/// <cartella scelta>/
+///   pdf/    ← referti originali  YYYY-MM-DD.pdf
+///   dati/   ← dati strutturati   YYYY-MM-DD.json  (valori, range, grafici)
+/// ```
 class BackupService {
-  /// Apre il dialog di selezione cartella e salva il percorso scelto.
-  /// Ritorna il percorso selezionato, o null se l'utente annulla.
+  static const _sottocartellaPdf = 'pdf';
+  static const _sottocartellaData = 'dati';
+
   static Future<String?> scegliCartella() async {
     final percorso = await FilePicker.platform.getDirectoryPath(
       dialogTitle: 'Scegli la cartella di backup',
@@ -30,25 +37,35 @@ class BackupService {
     return percorso;
   }
 
-  /// Ritorna la cartella di backup salvata, o null se non è stata scelta.
   static Future<String?> cartellaBackup() async {
     final prefs = await SharedPreferences.getInstance();
     return prefs.getString(Costanti.prefCartellaBackup);
   }
 
-  /// Esporta un singolo esame nella cartella di backup.
-  static Future<void> esportaEsame(Esame esame) async {
+  /// Esporta un esame nella cartella di backup.
+  /// Se [pdf] è fornito, salva anche il PDF originale in `pdf/`.
+  static Future<void> esportaEsame(Esame esame, {Uint8List? pdf}) async {
     final cartella = await cartellaBackup();
-    if (cartella == null) throw const BackupException('Nessuna cartella di backup configurata');
-    final dir = Directory(p.join(cartella, 'esami'));
-    await dir.create(recursive: true);
-    final file = File(p.join(dir.path, '${esame.dataIso}.json'));
-    await file.writeAsString(
+    if (cartella == null) {
+      throw const BackupException('Nessuna cartella di backup configurata');
+    }
+
+    // Dati strutturati → dati/YYYY-MM-DD.json
+    final dirDati = Directory(p.join(cartella, _sottocartellaData));
+    await dirDati.create(recursive: true);
+    await File(p.join(dirDati.path, '${esame.dataIso}.json')).writeAsString(
       const JsonEncoder.withIndent('  ').convert(esame.toJson()),
     );
+
+    // PDF originale → pdf/YYYY-MM-DD.pdf (solo se disponibile)
+    if (pdf != null) {
+      final dirPdf = Directory(p.join(cartella, _sottocartellaPdf));
+      await dirPdf.create(recursive: true);
+      await File(p.join(dirPdf.path, '${esame.dataIso}.pdf')).writeAsBytes(pdf);
+    }
   }
 
-  /// Esporta tutti gli esami nella cartella di backup.
+  /// Esporta tutti gli esami (solo JSON, i PDF non sono in memoria).
   static Future<int> esportaTutti(List<Esame> esami) async {
     var count = 0;
     for (final esame in esami) {
@@ -58,19 +75,21 @@ class BackupService {
     return count;
   }
 
-  /// Importa tutti i JSON dalla cartella di backup.
-  /// Ritorna la lista degli esami importati.
+  /// Importa tutti i JSON da `dati/`.
   static Future<List<Esame>> importaDaCartella() async {
     final cartella = await cartellaBackup();
-    if (cartella == null) throw const BackupException('Nessuna cartella di backup configurata');
-    final dir = Directory(p.join(cartella, 'esami'));
+    if (cartella == null) {
+      throw const BackupException('Nessuna cartella di backup configurata');
+    }
+    final dir = Directory(p.join(cartella, _sottocartellaData));
     if (!await dir.exists()) return [];
 
     final esami = <Esame>[];
     await for (final entity in dir.list()) {
       if (entity is File && entity.path.endsWith('.json')) {
         try {
-          final json = jsonDecode(await entity.readAsString()) as Map<String, dynamic>;
+          final json =
+              jsonDecode(await entity.readAsString()) as Map<String, dynamic>;
           esami.add(Esame.fromJson(json));
         } catch (_) {
           // Salta i file non validi
@@ -81,11 +100,13 @@ class BackupService {
     return esami;
   }
 
-  /// Elimina il file di backup di un esame.
   static Future<void> eliminaBackup(String dataIso) async {
     final cartella = await cartellaBackup();
     if (cartella == null) return;
-    final file = File(p.join(cartella, 'esami', '$dataIso.json'));
-    if (await file.exists()) await file.delete();
+    for (final sub in [_sottocartellaData, _sottocartellaPdf]) {
+      final ext = sub == _sottocartellaPdf ? 'pdf' : 'json';
+      final file = File(p.join(cartella, sub, '$dataIso.$ext'));
+      if (await file.exists()) await file.delete();
+    }
   }
 }

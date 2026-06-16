@@ -215,7 +215,7 @@ class ImportController extends StateNotifier<StatoImport> {
     try {
       final cartella = await BackupService.cartellaBackup();
       if (cartella != null) {
-        await BackupService.esportaEsame(esame);
+        await BackupService.esportaEsame(esame, pdf: _pdfCorrente);
         state = ImportSalvato(dataIso: esame.dataIso, backupOk: true);
       } else {
         state = ImportSalvato(dataIso: esame.dataIso);
