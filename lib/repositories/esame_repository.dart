@@ -3,53 +3,25 @@ import '../models/esame.dart';
 import '../models/parametro_snapshot.dart';
 import '../models/range_riferimento.dart';
 import '../models/serie_parametro.dart';
-import 'drive_repository.dart';
 
-/// Esito di una sincronizzazione da Drive.
-class RisultatoSync {
-  final int scaricati;
-  final int invariati;
-  final List<String> errori;
-
-  const RisultatoSync({
-    this.scaricati = 0,
-    this.invariati = 0,
-    this.errori = const [],
-  });
-
-  bool get haErrori => errori.isNotEmpty;
-
-  @override
-  String toString() =>
-      'RisultatoSync(scaricati: $scaricati, invariati: $invariati, '
-      'errori: ${errori.length})';
-}
-
-/// Repository principale degli esami: legge dalla cache SQLite (drift) e
-/// la mantiene allineata con Google Drive, che resta la fonte di verità.
+/// Repository principale degli esami: legge e scrive sulla cache SQLite (drift).
 class EsameRepository {
   final AppDatabase _db;
-  final DriveRepository? _drive;
 
-  EsameRepository(this._db, {DriveRepository? drive}) : _drive = drive;
+  EsameRepository(this._db);
 
-  /// Tutti gli esami in cache, dal più recente.
   Future<List<Esame>> esami() => _db.tuttiGliEsami();
 
   Future<Esame?> esamePerData(String dataIso) => _db.esamePerData(dataIso);
 
-  /// Salva un esame in cache (usato dopo l'import e dalla sync).
   Future<void> salvaEsame(Esame esame, {DateTime? modificatoIl}) =>
       _db.upsertEsame(esame, modificatoIl: modificatoIl);
 
   Future<void> eliminaEsame(String dataIso) => _db.eliminaEsame(dataIso);
 
   /// L'ultimo valore noto di ogni parametro, per la schermata Snapshot.
-  ///
-  /// I parametri sono confrontati per nome (case-insensitive) e ordinati
-  /// alfabeticamente.
   Future<List<ParametroSnapshot>> snapshot() async {
-    final tutti = await _db.tuttiGliEsami(); // già ordinati: recente → vecchio
+    final tutti = await _db.tuttiGliEsami();
     final visti = <String>{};
     final risultato = <ParametroSnapshot>[];
     for (final esame in tutti) {
@@ -68,25 +40,19 @@ class EsameRepository {
   }
 
   /// Tutti i valori nel tempo di ogni parametro, per la schermata Grafici.
-  ///
-  /// Il range è quello dell'esame più recente che contiene quel parametro.
-  /// I punti sono ordinati dal più vecchio al più recente (per i grafici).
   Future<List<SerieParametro>> serieParametri() async {
-    final tutti = await _db.tuttiGliEsami(); // recente → vecchio
-    // Accumuliamo per chiave (nome lowercase) → punti in ordine inverso.
+    final tutti = await _db.tuttiGliEsami();
     final puntiPerParametro = <String, List<PuntoParametro>>{};
     final unitaPerParametro = <String, String>{};
     final rangePerParametro = <String, RangeRiferimento>{};
     final nomeOriginale = <String, String>{};
 
-    // Iteriamo dal più vecchio al più recente per avere i punti in ordine.
     for (final esame in tutti.reversed) {
       for (final valore in esame.valori) {
         final chiave = valore.nome.toLowerCase();
         puntiPerParametro
             .putIfAbsent(chiave, () => [])
             .add(PuntoParametro(data: esame.data, valore: valore.valore));
-        // L'esame più recente sovrascrive unità e range (iterazione avanti→indietro).
         unitaPerParametro[chiave] = valore.unita;
         rangePerParametro[chiave] = valore.range;
         nomeOriginale[chiave] = valore.nome;
@@ -106,58 +72,5 @@ class EsameRepository {
       ..sort((a, b) => a.nome.toLowerCase().compareTo(b.nome.toLowerCase()));
 
     return serie;
-  }
-
-  /// Sincronizza la cache locale da Drive: scarica i JSON nuovi o
-  /// modificati, salta quelli già aggiornati. Un errore su un singolo file
-  /// non interrompe la sync degli altri.
-  ///
-  /// Elabora gli esami in pagine di [paginaDimensione] per evitare
-  /// di mantenere in memoria l'intera lista quando il Drive contiene
-  /// più di 20 esami.
-  Future<RisultatoSync> syncDaDrive({int paginaDimensione = 20}) async {
-    final drive = _drive;
-    if (drive == null) {
-      throw StateError('Sync non disponibile: DriveRepository non configurato');
-    }
-
-    final remoti = await drive.listEsami();
-    final dateLocali = await _db.dateModificaLocali();
-
-    var scaricati = 0;
-    var invariati = 0;
-    final errori = <String>[];
-
-    // Elaborazione paginata: max [paginaDimensione] download per iterazione.
-    for (var offset = 0; offset < remoti.length; offset += paginaDimensione) {
-      final fine = (offset + paginaDimensione).clamp(0, remoti.length);
-      final pagina = remoti.sublist(offset, fine);
-
-      for (final remoto in pagina) {
-        final localeModificatoIl = dateLocali[remoto.dataIso];
-        final aggiornato =
-            dateLocali.containsKey(remoto.dataIso) &&
-            localeModificatoIl != null &&
-            remoto.modificatoIl != null &&
-            !remoto.modificatoIl!.isAfter(localeModificatoIl);
-        if (aggiornato) {
-          invariati++;
-          continue;
-        }
-        try {
-          final esame = await drive.downloadJson(remoto.jsonFileId);
-          await _db.upsertEsame(esame, modificatoIl: remoto.modificatoIl);
-          scaricati++;
-        } catch (e) {
-          errori.add('${remoto.dataIso}: $e');
-        }
-      }
-    }
-
-    return RisultatoSync(
-      scaricati: scaricati,
-      invariati: invariati,
-      errori: errori,
-    );
   }
 }

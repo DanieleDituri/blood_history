@@ -196,8 +196,8 @@ class _PaginaImport extends StatelessWidget {
       descrizione:
           'Vai nella scheda Import e trascina (o seleziona) il PDF del tuo '
           'referto.\n\nIl modello lo analizzerà e potrai correggere i valori '
-          'prima del salvataggio.\n\nPuoi collegare Google Drive facoltativamente '
-          'dalle Impostazioni per fare backup automatico.',
+          'prima del salvataggio.\n\nDalle Impostazioni puoi scegliere una cartella '
+          'locale per il backup automatico dei tuoi esami.',
       azioni: FilledButton(
         onPressed: onFine,
         child: const Text("Inizia a usare l'app"),

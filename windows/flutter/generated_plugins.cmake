@@ -5,7 +5,6 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_drop
   dynamic_color
-  flutter_secure_storage_windows
   sqlite3_flutter_libs
   url_launcher_windows
 )

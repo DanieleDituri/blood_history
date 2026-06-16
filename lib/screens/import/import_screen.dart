@@ -212,41 +212,31 @@ class _Salvato extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              stato.driveOk ? Icons.check_circle_outline : Icons.cloud_off,
+              stato.erroreBackup != null
+                  ? Icons.warning_amber_outlined
+                  : Icons.check_circle_outline,
               size: 56,
-              color: stato.driveOk
-                  ? const Color(0xFF2E7D32)
-                  : tema.colorScheme.error,
+              color: stato.erroreBackup != null
+                  ? tema.colorScheme.error
+                  : const Color(0xFF2E7D32),
             ),
             const SizedBox(height: 12),
             Text('Esame del $data salvato', style: tema.textTheme.titleMedium),
             const SizedBox(height: 4),
             Text(
-              stato.driveOk
-                  ? 'Archiviato in locale e su Google Drive'
-                  : 'Salvato in locale, ma l\'upload su Drive è fallito:\n'
-                        '${stato.erroreDrive}',
+              stato.backupOk
+                  ? 'Salvato in locale e nel backup'
+                  : stato.erroreBackup != null
+                  ? 'Salvato in locale. Errore backup:\n${stato.erroreBackup}'
+                  : 'Salvato in locale',
               textAlign: TextAlign.center,
               style: tema.textTheme.bodySmall,
             ),
             const SizedBox(height: 20),
-            Wrap(
-              spacing: 12,
-              runSpacing: 8,
-              alignment: WrapAlignment.center,
-              children: [
-                if (stato.driveNonCollegato)
-                  AdaptiveButton(
-                    etichetta: 'Collega Drive e riprova',
-                    icona: Icons.cloud_upload_outlined,
-                    onPressed: controller.collegaDriveERiprova,
-                  ),
-                AdaptiveButton(
-                  etichetta: 'Nuovo import',
-                  icona: Icons.add,
-                  onPressed: controller.nuovoImport,
-                ),
-              ],
+            AdaptiveButton(
+              etichetta: 'Nuovo import',
+              icona: Icons.add,
+              onPressed: controller.nuovoImport,
             ),
           ],
         ),

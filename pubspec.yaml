@@ -1,5 +1,5 @@
 name: esami_tracker
-description: "EsamiTracker - tracking referti esami del sangue con estrazione AI locale e sync su Google Drive."
+description: "EsamiTracker - tracking referti esami del sangue con estrazione AI locale e backup su cartella locale."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -13,15 +13,6 @@ dependencies:
 
   # Stato
   flutter_riverpod: ^2.6.1
-
-  # Google Drive — niente login: consenso OAuth una tantum nel browser
-  # (loopback), poi refresh token persistito e accesso silenzioso.
-  googleapis: ^13.2.0
-  googleapis_auth: ^1.6.0
-  url_launcher: ^6.3.1
-  # Refresh token nel keystore di piattaforma (Keychain/Keystore/DPAPI),
-  # non in chiaro su disco.
-  flutter_secure_storage: ^10.3.1
 
   # Grafici (Sessione 2)
   fl_chart: ^0.69.2

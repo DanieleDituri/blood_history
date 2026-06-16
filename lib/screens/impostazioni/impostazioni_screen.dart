@@ -8,9 +8,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/costanti.dart';
 import '../../providers/providers.dart';
-import '../../repositories/drive_repository.dart';
 import '../../services/android/android_import_service.dart';
-import '../../services/auth/drive_auth_service.dart';
+import '../../services/backup/backup_service.dart';
 import '../../ui/platform/adaptive_scaffold.dart';
 
 class ImpostazioniScreen extends ConsumerStatefulWidget {
@@ -130,10 +129,8 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
             ),
             const SizedBox(height: 24),
           ],
-          _sezione('Google Drive'),
-          const _DriveSection(),
-          const SizedBox(height: 16),
-          const _EsportaCsvButton(),
+          _sezione('Backup locale'),
+          const _BackupSection(),
           const SizedBox(height: 32),
         ],
       ),
@@ -532,356 +529,143 @@ class _EndpointRowState extends State<_EndpointRow> {
   }
 }
 
-// ---- Sezione Drive ----------------------------------------------------------
+// ---- Sezione Backup locale --------------------------------------------------
 
-/// Sezione Google Drive: mostra lo stato della connessione e permette di
-/// collegare / disconnettere Drive. Gestisce anche l'inserimento delle
-/// credenziali OAuth (Client ID e Secret) quando non sono compilate nel
-/// binario con --dart-define.
-class _DriveSection extends ConsumerStatefulWidget {
-  const _DriveSection();
+class _BackupSection extends ConsumerStatefulWidget {
+  const _BackupSection();
 
   @override
-  ConsumerState<_DriveSection> createState() => _DriveSectionState();
+  ConsumerState<_BackupSection> createState() => _BackupSectionState();
 }
 
-class _DriveSectionState extends ConsumerState<_DriveSection> {
-  /// null = verifica in corso; true = collegato; false = non collegato.
-  bool? _collegato;
-  bool _inCollegamento = false;
-  String? _errore;
-
-  final _clientIdCtrl = TextEditingController();
-  final _secretCtrl = TextEditingController();
+class _BackupSectionState extends ConsumerState<_BackupSection> {
+  String? _cartella;
+  bool _inCorso = false;
+  String? _messaggio;
+  bool _messaggioErrore = false;
 
   @override
   void initState() {
     super.initState();
-    _inizializza();
-  }
-
-  Future<void> _inizializza() async {
-    // Carica eventuali credenziali OAuth salvate nelle impostazioni.
-    final prefs = await SharedPreferences.getInstance();
-    _clientIdCtrl.text = prefs.getString(Costanti.prefDriveClientId) ?? '';
-    _secretCtrl.text = prefs.getString(Costanti.prefDriveClientSecret) ?? '';
-
-    // Controlla se c'è già una sessione Drive valida (refresh token presente).
-    // Un'eccezione qui significa semplicemente "non collegato" — non è un errore.
-    final auth = ref.read(authServiceProvider);
-    bool ok;
-    try {
-      ok = await auth.ripristinaSessione();
-    } on DriveAuthException {
-      ok = false;
-    } catch (_) {
-      ok = false;
-    }
-    if (mounted) setState(() => _collegato = ok);
-  }
-
-  Future<void> _collega() async {
-    setState(() {
-      _inCollegamento = true;
-      _errore = null;
+    BackupService.cartellaBackup().then((c) {
+      if (mounted) setState(() => _cartella = c);
     });
-    // Salva client ID e secret prima di tentare il collegamento.
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      Costanti.prefDriveClientId,
-      _clientIdCtrl.text.trim(),
-    );
-    await prefs.setString(
-      Costanti.prefDriveClientSecret,
-      _secretCtrl.text.trim(),
-    );
-
-    try {
-      await ref.read(authServiceProvider).collega();
-      if (mounted) {
-        setState(() {
-          _collegato = true;
-          _inCollegamento = false;
-        });
-        // Sincronizza subito dopo il collegamento.
-        ref.read(syncNotifierProvider.notifier).sincronizza();
-      }
-    } on DriveAuthException catch (e) {
-      if (mounted) {
-        setState(() {
-          _errore = e.messaggio;
-          _inCollegamento = false;
-        });
-      }
-    }
   }
 
-  Future<void> _disconnetti() async {
-    final conferma = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Disconnetti Drive?'),
-        content: const Text(
-          'Le credenziali salvate verranno rimosse. '
-          'Potrai ricollegarti in qualsiasi momento.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Annulla'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Disconnetti'),
-          ),
-        ],
-      ),
-    );
-    if (conferma == true) {
-      await ref.read(authServiceProvider).scollega();
-      if (mounted) setState(() => _collegato = false);
-    }
+  Future<void> _scegli() async {
+    final percorso = await BackupService.scegliCartella();
+    if (percorso != null && mounted) setState(() => _cartella = percorso);
   }
-
-  @override
-  void dispose() {
-    _clientIdCtrl.dispose();
-    _secretCtrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    // Verifica iniziale ancora in corso.
-    if (_collegato == null) {
-      return const Padding(
-        padding: EdgeInsets.symmetric(vertical: 16),
-        child: Center(
-          child: SizedBox(
-            width: 20,
-            height: 20,
-            child: CircularProgressIndicator(strokeWidth: 2),
-          ),
-        ),
-      );
-    }
-
-    if (_collegato == true) {
-      return _ConnessaView(
-        sync: ref.watch(syncNotifierProvider),
-        onSync: () => ref.read(syncNotifierProvider.notifier).sincronizza(),
-        onDisconnetti: _disconnetti,
-      );
-    }
-
-    // Non collegato: mostra form per le credenziali OAuth + bottone.
-    return _CollegaView(
-      clientIdCtrl: _clientIdCtrl,
-      secretCtrl: _secretCtrl,
-      inCollegamento: _inCollegamento,
-      errore: _errore,
-      onCollega: _collega,
-    );
-  }
-}
-
-class _ConnessaView extends StatelessWidget {
-  final StatoSincronizzazione sync;
-  final VoidCallback onSync;
-  final VoidCallback onDisconnetti;
-
-  const _ConnessaView({
-    required this.sync,
-    required this.onSync,
-    required this.onDisconnetti,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final schema = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.cloud_done_outlined, color: Colors.green[700]),
-          title: const Text('Google Drive collegato'),
-          subtitle: sync.errore != null
-              ? Text('Errore: ${sync.errore}',
-                  style: TextStyle(color: schema.error))
-              : sync.ultimaSync != null
-              ? Text(
-                  'Ultima sync: ${_orario(sync.ultimaSync!)}',
-                  style: Theme.of(context).textTheme.bodySmall,
-                )
-              : const Text('Sincronizzazione in corso…'),
-          trailing: sync.inCorso
-              ? const SizedBox(
-                  width: 20,
-                  height: 20,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : IconButton(
-                  tooltip: 'Forza sincronizzazione',
-                  icon: const Icon(Icons.sync),
-                  onPressed: onSync,
-                ),
-        ),
-        const SizedBox(height: 4),
-        OutlinedButton.icon(
-          onPressed: onDisconnetti,
-          icon: const Icon(Icons.logout, size: 18),
-          label: const Text('Disconnetti Drive'),
-        ),
-      ],
-    );
-  }
-
-  static String _orario(DateTime dt) =>
-      '${dt.hour.toString().padLeft(2, '0')}:'
-      '${dt.minute.toString().padLeft(2, '0')}';
-}
-
-class _CollegaView extends StatelessWidget {
-  final TextEditingController clientIdCtrl;
-  final TextEditingController secretCtrl;
-  final bool inCollegamento;
-  final String? errore;
-  final VoidCallback onCollega;
-
-  const _CollegaView({
-    required this.clientIdCtrl,
-    required this.secretCtrl,
-    required this.inCollegamento,
-    required this.errore,
-    required this.onCollega,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final schema = Theme.of(context).colorScheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.cloud_off_outlined, color: schema.outline),
-          title: const Text('Google Drive non collegato'),
-          subtitle: const Text(
-            'Serve un Client ID OAuth "Desktop" dal tuo progetto Google Cloud.',
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextFormField(
-          controller: clientIdCtrl,
-          decoration: const InputDecoration(
-            labelText: 'Client ID',
-            hintText: '12345-abc.apps.googleusercontent.com',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 8),
-        TextFormField(
-          controller: secretCtrl,
-          obscureText: true,
-          decoration: const InputDecoration(
-            labelText: 'Client Secret',
-            border: OutlineInputBorder(),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          'Lascia Client Secret vuoto se usi un client OAuth "pubblico".',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: schema.onSurfaceVariant,
-          ),
-        ),
-        if (errore != null) ...[
-          const SizedBox(height: 8),
-          Text(
-            errore!,
-            style: TextStyle(color: schema.error, fontSize: 12),
-          ),
-        ],
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: inCollegamento ? null : onCollega,
-          icon: inCollegamento
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.open_in_browser_outlined),
-          label: Text(
-            inCollegamento
-                ? 'Apertura browser…'
-                : 'Collega Drive (apre il browser)',
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-// ---- Esporta CSV -----------------------------------------------------------
-
-class _EsportaCsvButton extends ConsumerStatefulWidget {
-  const _EsportaCsvButton();
-
-  @override
-  ConsumerState<_EsportaCsvButton> createState() => _EsportaCsvButtonState();
-}
-
-class _EsportaCsvButtonState extends ConsumerState<_EsportaCsvButton> {
-  bool _inCorso = false;
 
   Future<void> _esporta() async {
-    setState(() => _inCorso = true);
+    if (_cartella == null) {
+      await _scegli();
+      if (_cartella == null) return;
+    }
+    setState(() { _inCorso = true; _messaggio = null; });
     try {
       final esami = await ref.read(esameRepositoryProvider).esami();
       if (esami.isEmpty) {
-        _mostraSnackbar('Nessun esame da esportare');
+        _mostra('Nessun esame da esportare');
         return;
       }
-      await ref.read(driveRepositoryProvider).esportaCsv(esami);
-      _mostraSnackbar(
-        'CSV esportato in Google Drive › Esami del Sangue/export/',
-        errore: false,
-      );
-    } on DriveRepositoryException catch (e) {
-      _mostraSnackbar('Errore Drive: ${e.messaggio}', errore: true);
+      final n = await BackupService.esportaTutti(esami);
+      _mostra('$n esami esportati in $_cartella/esami/', errore: false);
+    } on BackupException catch (e) {
+      _mostra(e.messaggio, errore: true);
     } catch (e) {
-      _mostraSnackbar('Errore export: $e', errore: true);
+      _mostra('Errore: $e', errore: true);
     } finally {
       if (mounted) setState(() => _inCorso = false);
     }
   }
 
-  void _mostraSnackbar(String testo, {bool errore = false}) {
+  Future<void> _importa() async {
+    if (_cartella == null) {
+      await _scegli();
+      if (_cartella == null) return;
+    }
+    setState(() { _inCorso = true; _messaggio = null; });
+    try {
+      final esami = await BackupService.importaDaCartella();
+      if (esami.isEmpty) {
+        _mostra('Nessun file JSON trovato nella cartella backup');
+        return;
+      }
+      final repo = ref.read(esameRepositoryProvider);
+      for (final esame in esami) {
+        await repo.salvaEsame(esame);
+      }
+      ref.invalidate(snapshotProvider);
+      _mostra('${esami.length} esami importati', errore: false);
+    } on BackupException catch (e) {
+      _mostra(e.messaggio, errore: true);
+    } catch (e) {
+      _mostra('Errore: $e', errore: true);
+    } finally {
+      if (mounted) setState(() => _inCorso = false);
+    }
+  }
+
+  void _mostra(String testo, {bool errore = false}) {
     if (!mounted) return;
-    final schema = Theme.of(context).colorScheme;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(testo),
-        backgroundColor: errore ? schema.error : null,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
+    setState(() { _messaggio = testo; _messaggioErrore = errore; });
   }
 
   @override
   Widget build(BuildContext context) {
-    return OutlinedButton.icon(
-      onPressed: _inCorso ? null : _esporta,
-      icon: _inCorso
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : const Icon(Icons.download_outlined),
-      label: const Text('Esporta tutti i dati come CSV'),
+    final schema = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(
+            _cartella != null ? Icons.folder_outlined : Icons.folder_off_outlined,
+            color: _cartella != null ? Colors.green[700] : schema.outline,
+          ),
+          title: Text(_cartella != null ? 'Cartella backup' : 'Nessuna cartella scelta'),
+          subtitle: _cartella != null
+              ? Text(_cartella!, style: Theme.of(context).textTheme.bodySmall)
+              : const Text('Scegli una cartella dove salvare i tuoi esami'),
+          trailing: TextButton(
+            onPressed: _scegli,
+            child: const Text('Cambia'),
+          ),
+        ),
+        if (_messaggio != null) ...[
+          const SizedBox(height: 4),
+          Text(
+            _messaggio!,
+            style: TextStyle(
+              fontSize: 12,
+              color: _messaggioErrore ? schema.error : Colors.green[700],
+            ),
+          ),
+        ],
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: FilledButton.icon(
+                onPressed: _inCorso ? null : _esporta,
+                icon: _inCorso
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.upload_outlined),
+                label: const Text('Esporta backup'),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: OutlinedButton.icon(
+                onPressed: _inCorso ? null : _importa,
+                icon: const Icon(Icons.download_outlined),
+                label: const Text('Importa backup'),
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 }
