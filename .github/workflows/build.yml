@@ -1,0 +1,83 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.4'
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter build macos --release
+          --dart-define=DRIVE_CLIENT_ID=${{ secrets.DRIVE_CLIENT_ID }}
+          --dart-define=DRIVE_CLIENT_SECRET=${{ secrets.DRIVE_CLIENT_SECRET }}
+
+      - name: Zip app
+        run: |
+          cd build/macos/Build/Products/Release
+          zip -r EsamiTracker-macOS.zip EsamiTracker.app
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EsamiTracker-macOS
+          path: build/macos/Build/Products/Release/EsamiTracker-macOS.zip
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.4'
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter build windows --release --dart-define=DRIVE_CLIENT_ID=${{ secrets.DRIVE_CLIENT_ID }} --dart-define=DRIVE_CLIENT_SECRET=${{ secrets.DRIVE_CLIENT_SECRET }}
+
+      - name: Zip app
+        run: Compress-Archive -Path build\windows\x64\runner\Release\* -DestinationPath EsamiTracker-Windows.zip
+        shell: pwsh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EsamiTracker-Windows
+          path: EsamiTracker-Windows.zip
+
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.35.4'
+          cache: true
+
+      - run: flutter pub get
+
+      - run: flutter build apk --release
+          --dart-define=DRIVE_CLIENT_ID=${{ secrets.DRIVE_CLIENT_ID }}
+          --dart-define=DRIVE_CLIENT_SECRET=${{ secrets.DRIVE_CLIENT_SECRET }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EsamiTracker-Android
+          path: build/app/outputs/flutter-apk/app-release.apk
