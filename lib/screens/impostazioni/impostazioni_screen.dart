@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io' show Platform;
 
 import 'package:flutter/material.dart';
@@ -20,56 +21,115 @@ class ImpostazioniScreen extends ConsumerStatefulWidget {
 }
 
 class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
-  late TextEditingController _endpointLm;
-  late TextEditingController _endpointOllama;
-  late TextEditingController _modello;
+  late TextEditingController _endpoint;
   String _tipo = 'lmstudio';
+  String? _modelloSelezionato;
+  List<String> _modelli = [];
+  bool _caricandoModelli = false;
   bool _caricato = false;
 
   @override
   void initState() {
     super.initState();
-    _endpointLm = TextEditingController();
-    _endpointOllama = TextEditingController();
-    _modello = TextEditingController();
+    _endpoint = TextEditingController();
     _carica();
   }
 
   Future<void> _carica() async {
     final prefs = await SharedPreferences.getInstance();
+    final tipo = prefs.getString(Costanti.prefTipoModello) ?? 'lmstudio';
+    final defaultEndpoint = tipo == 'ollama'
+        ? Costanti.endpointOllama
+        : Costanti.endpointLmStudio;
+    final defaultModello = tipo == 'ollama'
+        ? Costanti.modelloDefaultOllama
+        : Costanti.modelloDefaultLmStudio;
     setState(() {
-      _tipo = prefs.getString(Costanti.prefTipoModello) ?? 'lmstudio';
-      _endpointLm.text =
-          prefs.getString(Costanti.prefEndpointModello) ??
-          Costanti.endpointLmStudio;
-      _endpointOllama.text = Costanti.endpointOllama;
-      _modello.text =
-          prefs.getString(Costanti.prefNomeModello) ??
-          Costanti.modelloDefaultLmStudio;
+      _tipo = tipo;
+      _endpoint.text =
+          prefs.getString(Costanti.prefEndpointModello) ?? defaultEndpoint;
+      _modelloSelezionato =
+          prefs.getString(Costanti.prefNomeModello) ?? defaultModello;
       _caricato = true;
     });
+    await _caricaModelli();
+  }
+
+  Future<void> _cambiaTipo(String tipo) async {
+    final defaultEndpoint = tipo == 'ollama'
+        ? Costanti.endpointOllama
+        : Costanti.endpointLmStudio;
+    setState(() {
+      _tipo = tipo;
+      _endpoint.text = defaultEndpoint;
+      _modelli = [];
+      _modelloSelezionato = null;
+    });
+    await _caricaModelli();
+  }
+
+  Future<void> _caricaModelli() async {
+    setState(() => _caricandoModelli = true);
+    try {
+      final url = _tipo == 'ollama'
+          ? '${_endpoint.text}/api/tags'
+          : '${_endpoint.text}/models';
+      final resp = await http
+          .get(Uri.parse(url))
+          .timeout(const Duration(seconds: 5));
+      if (resp.statusCode < 400) {
+        final json = jsonDecode(resp.body) as Map<String, dynamic>;
+        List<String> nomi;
+        if (_tipo == 'ollama') {
+          final lista = json['models'] as List? ?? [];
+          nomi = lista
+              .map((m) => (m as Map)['name'] as String)
+              .toList();
+        } else {
+          final lista = json['data'] as List? ?? [];
+          nomi = lista
+              .map((m) => (m as Map)['id'] as String)
+              .toList();
+        }
+        nomi.sort();
+        if (mounted) {
+          setState(() {
+            _modelli = nomi;
+            if (_modelloSelezionato != null &&
+                !nomi.contains(_modelloSelezionato)) {
+              // Il modello salvato non è nella lista: lo teniamo comunque
+              // come selezione ma lo aggiungiamo in cima per mostrarlo.
+              _modelli = [_modelloSelezionato!, ...nomi];
+            }
+          });
+        }
+      }
+    } catch (_) {
+      // Endpoint non raggiungibile: lista rimane vuota, si può digitare.
+    } finally {
+      if (mounted) setState(() => _caricandoModelli = false);
+    }
   }
 
   Future<void> _salva() async {
     final prefs = await SharedPreferences.getInstance();
-    final endpoint =
-        _tipo == 'ollama' ? _endpointOllama.text : _endpointLm.text;
     await prefs.setString(Costanti.prefTipoModello, _tipo);
-    await prefs.setString(Costanti.prefEndpointModello, endpoint.trim());
-    await prefs.setString(Costanti.prefNomeModello, _modello.text.trim());
+    await prefs.setString(Costanti.prefEndpointModello, _endpoint.text.trim());
+    await prefs.setString(
+      Costanti.prefNomeModello,
+      _modelloSelezionato?.trim() ?? '',
+    );
     ref.invalidate(configModelloProvider);
     if (mounted) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Impostazioni salvate')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Impostazioni salvate')),
+      );
     }
   }
 
   @override
   void dispose() {
-    _endpointLm.dispose();
-    _endpointOllama.dispose();
-    _modello.dispose();
+    _endpoint.dispose();
     super.dispose();
   }
 
@@ -94,33 +154,67 @@ class _ImpostazioniState extends ConsumerState<ImpostazioniScreen> {
             _sezione('Modello Vision Locale'),
             _TipoModelloSelector(
               valore: _tipo,
-              onCambia: (v) => setState(() => _tipo = v),
+              onCambia: _cambiaTipo,
             ),
             const SizedBox(height: 16),
             const _ModalitaDesktopSelector(),
             const SizedBox(height: 16),
-            _EndpointRow(
-              label: 'Endpoint LM Studio',
-              controller: _endpointLm,
-              attivo: _tipo == 'lmstudio',
-              urlTest: '${_endpointLm.text}/models',
+            // Endpoint unico che cambia col selettore
+            Row(
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _endpoint,
+                    decoration: InputDecoration(
+                      labelText: _tipo == 'ollama'
+                          ? 'Endpoint Ollama'
+                          : 'Endpoint LM Studio',
+                      border: const OutlineInputBorder(),
+                    ),
+                    onEditingComplete: _caricaModelli,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _caricaModelli,
+                  child: _caricandoModelli
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Text('Test'),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
-            _EndpointRow(
-              label: 'Endpoint Ollama',
-              controller: _endpointOllama,
-              attivo: _tipo == 'ollama',
-              urlTest: '${_endpointOllama.text}/tags',
-            ),
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: _modello,
-              decoration: const InputDecoration(
-                labelText: 'Nome modello',
-                hintText: 'es. qwen/qwen3-vl-8b',
-                border: OutlineInputBorder(),
+            // Selezione modello: dropdown se la lista è disponibile
+            if (_modelli.isNotEmpty)
+              DropdownMenu<String>(
+                initialSelection: _modelloSelezionato,
+                expandedInsets: EdgeInsets.zero,
+                label: const Text('Modello'),
+                dropdownMenuEntries: _modelli
+                    .map((m) => DropdownMenuEntry(value: m, label: m))
+                    .toList(),
+                onSelected: (v) => setState(() => _modelloSelezionato = v),
+              )
+            else
+              TextFormField(
+                key: ValueKey(_modelloSelezionato),
+                initialValue: _modelloSelezionato,
+                decoration: InputDecoration(
+                  labelText: 'Modello',
+                  hintText: _tipo == 'ollama'
+                      ? 'es. qwen3-vl:8b'
+                      : 'es. qwen/qwen3-vl-8b',
+                  border: const OutlineInputBorder(),
+                  helperText: _caricandoModelli
+                      ? 'Caricamento modelli…'
+                      : 'Endpoint non raggiungibile — inserisci il nome manualmente',
+                ),
+                onChanged: (v) => _modelloSelezionato = v,
               ),
-            ),
             const SizedBox(height: 24),
             FilledButton.icon(
               onPressed: _salva,
@@ -448,83 +542,6 @@ class _TipoModelloSelector extends StatelessWidget {
       ],
       selected: {valore},
       onSelectionChanged: (set) => onCambia(set.first),
-    );
-  }
-}
-
-// ---- Riga endpoint con bottone test ----------------------------------------
-
-class _EndpointRow extends StatefulWidget {
-  final String label;
-  final TextEditingController controller;
-  final bool attivo;
-  final String urlTest;
-
-  const _EndpointRow({
-    required this.label,
-    required this.controller,
-    required this.attivo,
-    required this.urlTest,
-  });
-
-  @override
-  State<_EndpointRow> createState() => _EndpointRowState();
-}
-
-class _EndpointRowState extends State<_EndpointRow> {
-  bool _testing = false;
-  bool? _ok;
-
-  Future<void> _testa() async {
-    setState(() {
-      _testing = true;
-      _ok = null;
-    });
-    try {
-      final resp = await http
-          .get(Uri.parse(widget.urlTest))
-          .timeout(const Duration(seconds: 5));
-      setState(() => _ok = resp.statusCode < 400);
-    } catch (_) {
-      setState(() => _ok = false);
-    } finally {
-      setState(() => _testing = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final schema = Theme.of(context).colorScheme;
-    return Row(
-      children: [
-        Expanded(
-          child: TextFormField(
-            controller: widget.controller,
-            enabled: widget.attivo,
-            decoration: InputDecoration(
-              labelText: widget.label,
-              border: const OutlineInputBorder(),
-              suffixIcon: _ok == null
-                  ? null
-                  : Icon(
-                      _ok! ? Icons.check_circle : Icons.error_outline,
-                      color: _ok! ? Colors.green : schema.error,
-                    ),
-            ),
-          ),
-        ),
-        const SizedBox(width: 8),
-        OutlinedButton(
-          onPressed: widget.attivo && !_testing ? _testa : null,
-          child: _testing
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Text('Test'),
-        ),
-      ],
     );
   }
 }
