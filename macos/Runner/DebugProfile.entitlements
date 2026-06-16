@@ -10,8 +10,8 @@
 	<true/>
 	<key>com.apple.security.network.client</key>
 	<true/>
-	<!-- Lettura dei PDF scelti dall'utente (file picker / drag&drop). -->
-	<key>com.apple.security.files.user-selected.read-only</key>
+	<!-- Lettura/scrittura su file e cartelle scelti dall'utente (import PDF + backup). -->
+	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
 </dict>
 </plist>
