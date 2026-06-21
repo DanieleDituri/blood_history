@@ -10,6 +10,7 @@ import '../../core/costanti.dart';
 import '../../providers/providers.dart';
 import '../../repositories/drive_repository.dart';
 import '../../services/android/android_import_service.dart';
+import '../../services/auth/drive_auth_service.dart';
 import '../../ui/platform/adaptive_scaffold.dart';
 
 class ImpostazioniScreen extends ConsumerStatefulWidget {
@@ -533,11 +534,113 @@ class _EndpointRowState extends State<_EndpointRow> {
 
 // ---- Sezione Drive ----------------------------------------------------------
 
-class _DriveSection extends ConsumerWidget {
+class _DriveSection extends ConsumerStatefulWidget {
   const _DriveSection();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_DriveSection> createState() => _DriveSectionState();
+}
+
+class _DriveSectionState extends ConsumerState<_DriveSection> {
+  bool? _collegato; // null = verifica in corso
+  bool _inCollegamento = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _verificaConnessione();
+  }
+
+  Future<void> _verificaConnessione() async {
+    final ok = await ref.read(authServiceProvider).ripristinaSessione();
+    if (mounted) setState(() => _collegato = ok);
+  }
+
+  Future<void> _collega() async {
+    setState(() => _inCollegamento = true);
+    try {
+      await ref.read(authServiceProvider).collega();
+      if (mounted) setState(() => _collegato = true);
+      await ref.read(syncNotifierProvider.notifier).sincronizza();
+    } on DriveAuthException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Collegamento fallito: ${e.messaggio}'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _inCollegamento = false);
+    }
+  }
+
+  Future<void> _disconnetti() async {
+    final conferma = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Disconnetti Drive?'),
+        content: const Text(
+          'Le credenziali salvate verranno rimosse. '
+          'Potrai riconnetterti in qualsiasi momento.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Annulla'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Disconnetti'),
+          ),
+        ],
+      ),
+    );
+    if (conferma == true) {
+      await ref.read(authServiceProvider).scollega();
+      if (mounted) setState(() => _collegato = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_collegato == null) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (!_collegato!) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const ListTile(
+            contentPadding: EdgeInsets.zero,
+            leading: Icon(Icons.cloud_off_outlined),
+            title: Text('Google Drive'),
+            subtitle: Text('Non collegato'),
+          ),
+          const SizedBox(height: 4),
+          FilledButton.icon(
+            onPressed: _inCollegamento ? null : _collega,
+            icon: _inCollegamento
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.cloud_upload_outlined),
+            label: const Text('Collega Google Drive'),
+          ),
+        ],
+      );
+    }
+
     final sync = ref.watch(syncNotifierProvider);
     final schema = Theme.of(context).colorScheme;
 
@@ -574,7 +677,7 @@ class _DriveSection extends ConsumerWidget {
         ),
         const SizedBox(height: 4),
         OutlinedButton.icon(
-          onPressed: () => _disconnetti(context, ref),
+          onPressed: _disconnetti,
           icon: const Icon(Icons.logout, size: 18),
           label: const Text('Disconnetti Drive'),
         ),
@@ -582,36 +685,9 @@ class _DriveSection extends ConsumerWidget {
     );
   }
 
-  static String _orario(DateTime dt) {
-    return '${dt.hour.toString().padLeft(2, '0')}:'
-        '${dt.minute.toString().padLeft(2, '0')}';
-  }
-
-  static Future<void> _disconnetti(BuildContext context, WidgetRef ref) async {
-    final conferma = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Disconnetti Drive?'),
-        content: const Text(
-          'Le credenziali salvate verranno rimosse. '
-          'Potrai riconnetterti in qualsiasi momento.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Annulla'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Disconnetti'),
-          ),
-        ],
-      ),
-    );
-    if (conferma == true) {
-      await ref.read(authServiceProvider).scollega();
-    }
-  }
+  static String _orario(DateTime dt) =>
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}';
 }
 
 // ---- Esporta CSV -----------------------------------------------------------

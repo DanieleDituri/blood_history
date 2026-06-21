@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 // per evitare import circolare: esami_notifier.dart → providers.dart.
 import 'esami_notifier.dart';
 import 'providers.dart' show esameRepositoryProvider;
+import '../services/auth/drive_auth_service.dart';
 
 enum StatoSync { inattivo, sincronizzando }
 
@@ -42,6 +43,9 @@ class SyncNotifier extends Notifier<StatoSincronizzazione> {
       state = StatoSincronizzazione(ultimaSync: DateTime.now());
     } on StateError {
       // Drive non configurato: sync silenziosa.
+      state = const StatoSincronizzazione();
+    } on DriveAuthException {
+      // Drive non ancora autorizzato: sync silenziosa.
       state = const StatoSincronizzazione();
     } catch (e) {
       state = StatoSincronizzazione(errore: e.toString());
